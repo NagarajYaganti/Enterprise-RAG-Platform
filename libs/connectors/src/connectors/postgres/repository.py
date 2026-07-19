@@ -61,7 +61,14 @@ class DocumentRepository:
         stmt = select(DocumentORM).where(
             DocumentORM.tenant_id == tenant_id, DocumentORM.checksum == checksum
         )
-        row = self._session.execute(stmt).scalar_one_or_none()
+        row = self._session.execute(stmt).scalars().first()
+        return _document_to_model(row) if row else None
+
+    def find_by_source_uri(self, tenant_id: str, source_uri: str) -> Document | None:
+        stmt = select(DocumentORM).where(
+            DocumentORM.tenant_id == tenant_id, DocumentORM.source_uri == source_uri
+        )
+        row = self._session.execute(stmt).scalars().first()
         return _document_to_model(row) if row else None
 
     def list_for_tenant(self, tenant_id: str) -> list[Document]:

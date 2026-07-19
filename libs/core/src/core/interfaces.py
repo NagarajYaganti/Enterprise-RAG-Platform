@@ -21,8 +21,16 @@ class DocumentParser(ABC):
 
 class Chunker(ABC):
     @abstractmethod
-    def chunk(self, doc: ParsedDocument, strategy: str) -> list[Chunk]:
-        """Split a parsed document into Chunks using the given strategy."""
+    def chunk(
+        self, doc: ParsedDocument, strategy: str, *, language: str = "unknown", version: int = 1
+    ) -> list[Chunk]:
+        """Split a parsed document into Chunks using the given strategy.
+
+        tenant_id/document_id come from doc itself (already stamped by the
+        time chunking runs). language/version are additive optional keyword
+        args, same rationale as DocumentParser.parse's tenant_id/document_id:
+        the fixed contract's signature is chunk(doc, strategy).
+        """
 
 
 class EmbeddingProvider(ABC):

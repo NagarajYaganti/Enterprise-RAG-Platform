@@ -31,6 +31,7 @@ class UnstructuredParser(DocumentParser):
                 "category": el.category,
                 "text": el.text,
                 "filetype": el.metadata.filetype,
+                "page_number": getattr(el.metadata, "page_number", None),
             }
             for el in elements
         ]

@@ -74,6 +74,17 @@ def test_find_by_checksum_is_tenant_scoped(session: Session) -> None:
     session.commit()
 
     assert repo.find_by_checksum("tenant-a", "checksum-shared") is not None
+
+
+def test_find_by_source_uri_is_tenant_scoped(session: Session) -> None:
+    repo = DocumentRepository(session)
+    repo.upsert(_make_document("tenant-a", "doc-1", "checksum-1"))
+    session.commit()
+
+    found = repo.find_by_source_uri("tenant-a", "s3://bucket/doc-1")
+    assert found is not None
+    assert found.id == "doc-1"
+    assert repo.find_by_source_uri("tenant-b", "s3://bucket/doc-1") is None
     assert repo.find_by_checksum("tenant-b", "checksum-shared") is None
 
 

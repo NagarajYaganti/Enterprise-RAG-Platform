@@ -28,10 +28,53 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.5-pg17
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8.4
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: astral-sh/setup-uv@v8.3.2
         with:
           python-version: "3.12"
+
+      # Parser adapters need these system binaries (pytesseract, faster-whisper).
+      - name: Install tesseract-ocr and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr ffmpeg
+
+      # MinIO's image needs `server /data` as command args, which the
+      # `services:` block can't pass through (no `command:` override there),
+      # so it's started directly instead of as a GH Actions service.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=ragadmin -e MINIO_ROOT_PASSWORD=ragadminsecret \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+
       - run: uv sync --all-packages
       - run: uv run pytest -v
