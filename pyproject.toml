@@ -12,6 +12,16 @@ dev = [
     "mypy==2.3.0",
     "httpx2==2.7.0",
     "types-pyyaml==6.0.12.20260518",
+    "types-openpyxl==3.1.5.20260518",
+    "types-fpdf2==2.8.4.20260712",
+]
+fixtures = [
+    "fpdf2==2.8.7",
+    "openpyxl==3.1.5",
+    "pillow==12.3.0",
+    "python-docx==1.2.0",
+    "python-pptx==1.0.2",
+    "pyttsx3==2.99",
 ]
 
 [tool.uv.workspace]
@@ -43,6 +53,10 @@ disallow_untyped_defs = true
 module = ["core.*", "observability.*"]
 strict = true
 
+[[tool.mypy.overrides]]
+module = ["pyttsx3.*", "faster_whisper.*", "pytesseract.*", "boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [
@@ -50,4 +64,6 @@ pythonpath = [
     "libs/connectors/src",
     "libs/observability/src",
     "services/gateway/src",
+    "services/ingestion/src",
+    "services/preprocessing/src",
 ]
