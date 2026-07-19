@@ -6,7 +6,7 @@
 # schema per entry (populated starting Phase 2 embeddings / Phase 4 routing):
 #   id: str                        # provider's model identifier
 #   provider: str                  # e.g. openai, anthropic, cohere, huggingface, self-hosted
-#   task: str                      # embedding | generation | rerank
+#   task: str                      # embedding | generation | rerank | stt | ocr
 #   cost_per_1k_tokens: float
 #   latency_class: str             # e.g. low | medium | high
 #   languages: list[str]
@@ -14,4 +14,13 @@
 #   verified_date: str | null      # ISO date of last verification
 #   verified_by: str | null
 
-models: []
+models:
+  - id: tiny
+    provider: faster-whisper
+    task: stt
+    cost_per_1k_tokens: 0.0
+    latency_class: low
+    languages: ["en"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null

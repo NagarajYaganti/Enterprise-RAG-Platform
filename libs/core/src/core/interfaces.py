@@ -1,16 +1,27 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
+
+from core.models import Chunk, ParsedDocument
 
 
 class DocumentParser(ABC):
     @abstractmethod
-    def parse(self, file: Any, mime_type: str) -> Any:
-        """Parse a raw file into a ParsedDocument."""
+    def parse(
+        self, file: Any, mime_type: str, *, tenant_id: str = "", document_id: str = ""
+    ) -> ParsedDocument:
+        """Parse a raw file into a ParsedDocument.
+
+        The fixed contract's signature is parse(file, mime_type); tenant_id and
+        document_id are additive optional keyword args so callers with that
+        context (the ingestion worker) can stamp it directly, without breaking
+        the two-positional-arg shape any adapter can still be called with.
+        """
 
 
 class Chunker(ABC):
     @abstractmethod
-    def chunk(self, doc: Any, strategy: str) -> list[Any]:
+    def chunk(self, doc: ParsedDocument, strategy: str) -> list[Chunk]:
         """Split a parsed document into Chunks using the given strategy."""
 
 
@@ -56,3 +67,33 @@ class Guardrail(ABC):
     @abstractmethod
     def check(self, payload: Any, policy: str) -> Any:
         """Check input or output against a named policy, returning a GuardrailResult."""
+
+
+class SourceConnector(ABC):
+    """Phase-1 addition (per Section 4 Phase 1 task text): pull-based source
+    with incremental sync and deletion propagation. Not one of the original 8
+    core interfaces in docs/ARCHITECTURE.md — an explicit, phase-directed
+    extension, not a redesign of the fixed contract.
+    """
+
+    @abstractmethod
+    def list_documents(self, since: datetime | None) -> list[Any]:
+        """List document refs changed/added since the given point (or all, if None)."""
+
+    @abstractmethod
+    def fetch(self, ref: Any) -> ParsedDocument:
+        """Fetch and parse a single document by its source ref."""
+
+    @abstractmethod
+    def list_deletions(self, since: datetime | None) -> list[str]:
+        """List source-side document ids deleted since the given point."""
+
+
+class Translator(ABC):
+    """Phase-1 addition (per Section 4 Phase 1 task text). Stub-only this
+    phase — no real translation provider is wired in yet.
+    """
+
+    @abstractmethod
+    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        """Translate text from source_lang to target_lang."""

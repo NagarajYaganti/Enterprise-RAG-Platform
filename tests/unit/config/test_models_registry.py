@@ -5,7 +5,29 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODELS_YAML = REPO_ROOT / "config" / "models.yaml"
 
+REQUIRED_FIELDS = {
+    "id",
+    "provider",
+    "task",
+    "cost_per_1k_tokens",
+    "latency_class",
+    "languages",
+    "verified_before_deploy",
+    "verified_date",
+    "verified_by",
+}
 
-def test_models_yaml_parses_and_starts_empty() -> None:
+
+def test_models_yaml_parses() -> None:
     content = yaml.safe_load(MODELS_YAML.read_text())
-    assert content == {"models": []}
+    assert "models" in content
+    assert isinstance(content["models"], list)
+
+
+def test_every_model_entry_matches_schema_and_is_unverified() -> None:
+    content = yaml.safe_load(MODELS_YAML.read_text())
+    for entry in content["models"]:
+        assert REQUIRED_FIELDS <= entry.keys()
+        # No entry may claim to be deploy-verified without a human having
+        # actually done so — this repo has no automated verification step.
+        assert entry["verified_before_deploy"] is False

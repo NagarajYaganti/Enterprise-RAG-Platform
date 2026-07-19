@@ -6,6 +6,7 @@ from core.models import (
     Completion,
     Document,
     EmbeddingRecord,
+    ParsedDocument,
     Query,
     RetrievalResult,
     ScoredChunk,
@@ -45,13 +46,107 @@ def test_document_requires_tenant_id() -> None:
         )  # type: ignore[call-arg]
 
 
+def test_document_status_rejects_unknown_value() -> None:
+    with pytest.raises(ValidationError):
+        Document(
+            id="doc-1",
+            tenant_id=TENANT_ID,
+            source_uri="s3://bucket/file.pdf",
+            mime_type="application/pdf",
+            checksum="abc123",
+            version=1,
+            status="NOT_A_REAL_STATUS",  # type: ignore[arg-type]
+        )
+
+
+def test_document_acl_principals_defaults_empty_and_can_be_set() -> None:
+    doc = Document(
+        id="doc-1",
+        tenant_id=TENANT_ID,
+        source_uri="s3://bucket/file.pdf",
+        mime_type="application/pdf",
+        checksum="abc123",
+        version=1,
+        status="UPLOADED",
+    )
+    assert doc.acl_principals == []
+
+    doc_with_acl = Document(
+        id="doc-2",
+        tenant_id=TENANT_ID,
+        source_uri="s3://bucket/file2.pdf",
+        mime_type="application/pdf",
+        checksum="def456",
+        version=1,
+        status="UPLOADED",
+        acl_principals=["msgraph:user:abc123"],
+    )
+    assert doc_with_acl.acl_principals == ["msgraph:user:abc123"]
+
+
+def test_parsed_document_requires_tenant_id() -> None:
+    parsed = ParsedDocument(
+        tenant_id=TENANT_ID,
+        document_id="doc-1",
+        raw_text="hello world",
+        structural_elements=[{"category": "Title", "text": "hello"}],
+        mime_type="text/html",
+        source_uri="s3://bucket/file.html",
+        checksum="abc123",
+    )
+    assert parsed.tenant_id == TENANT_ID
+    assert parsed.acl_principals == []
+    with pytest.raises(ValidationError):
+        ParsedDocument(
+            document_id="doc-1",
+            raw_text="hello world",
+            mime_type="text/html",
+            source_uri="s3://bucket/file.html",
+            checksum="abc123",
+        )  # type: ignore[call-arg]
+
+
 def test_chunk_requires_tenant_id() -> None:
     chunk = Chunk(
-        id="chunk-1", tenant_id=TENANT_ID, document_id="doc-1", text="hello", position=0
+        id="chunk-1",
+        tenant_id=TENANT_ID,
+        document_id="doc-1",
+        text="hello",
+        position=0,
+        language="en",
+        version=1,
     )
     assert chunk.tenant_id == TENANT_ID
     with pytest.raises(ValidationError):
         Chunk(id="chunk-1", document_id="doc-1", text="hello", position=0)  # type: ignore[call-arg]
+
+
+def test_chunk_defaults_active_status_and_empty_acl() -> None:
+    chunk = Chunk(
+        id="chunk-1",
+        tenant_id=TENANT_ID,
+        document_id="doc-1",
+        text="hello",
+        position=0,
+        language="en",
+        version=1,
+    )
+    assert chunk.status == "active"
+    assert chunk.acl_principals == []
+
+
+def test_chunk_status_rejects_unknown_value() -> None:
+    with pytest.raises(ValidationError):
+        Chunk(
+            id="chunk-1",
+            tenant_id=TENANT_ID,
+            document_id="doc-1",
+            text="hello",
+            position=0,
+            language="en",
+            version=1,
+            status="not-a-real-status",  # type: ignore[arg-type]
+        )
 
 
 def test_embedding_record_requires_tenant_id() -> None:
@@ -83,7 +178,13 @@ def test_query_requires_tenant_id() -> None:
 
 def test_retrieval_result_requires_tenant_id() -> None:
     chunk = Chunk(
-        id="chunk-1", tenant_id=TENANT_ID, document_id="doc-1", text="hello", position=0
+        id="chunk-1",
+        tenant_id=TENANT_ID,
+        document_id="doc-1",
+        text="hello",
+        position=0,
+        language="en",
+        version=1,
     )
     result = RetrievalResult(
         tenant_id=TENANT_ID,
