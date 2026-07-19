@@ -10,14 +10,21 @@ requires-python = ">=3.12"
 dependencies = [
     "arq==0.28.0",
     "boto3==1.43.51",
+    "cohere==7.0.5",
     "core",
     "extract-msg==0.56.0",
     "faster-whisper==1.2.1",
     "httpx==0.28.1",
+    "openai==2.46.0",
+    "opensearch-py==3.2.0",
+    "pgvector==0.5.0",
     "psycopg[binary]==3.3.4",
     "pydantic-settings==2.14.2",
     "pytesseract==0.3.13",
+    "qdrant-client==1.18.0",
+    "sentence-transformers==5.6.0",
     "sqlalchemy==2.0.51",
+    "tenacity==9.1.4",
     "unstructured[docx,pdf,pptx,xlsx]==0.24.1",
 ]
 

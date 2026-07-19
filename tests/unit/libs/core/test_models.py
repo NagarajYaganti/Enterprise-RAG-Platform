@@ -6,11 +6,14 @@ from core.models import (
     Completion,
     Document,
     EmbeddingRecord,
+    KeywordSearchHit,
     ParsedDocument,
     Query,
     RetrievalResult,
     ScoredChunk,
     Tenant,
+    Vector,
+    VectorSearchHit,
 )
 from pydantic import ValidationError
 
@@ -153,6 +156,7 @@ def test_embedding_record_requires_tenant_id() -> None:
     record = EmbeddingRecord(
         id="emb-1",
         tenant_id=TENANT_ID,
+        document_id="doc-1",
         chunk_id="chunk-1",
         vector=[0.1, 0.2],
         model_id="bge-small",
@@ -162,11 +166,58 @@ def test_embedding_record_requires_tenant_id() -> None:
     with pytest.raises(ValidationError):
         EmbeddingRecord(
             id="emb-1",
+            document_id="doc-1",
             chunk_id="chunk-1",
             vector=[0.1, 0.2],
             model_id="bge-small",
             model_version="1",
         )  # type: ignore[call-arg]
+
+
+def test_embedding_record_defaults_active_status_and_empty_acl() -> None:
+    record = EmbeddingRecord(
+        id="emb-1",
+        tenant_id=TENANT_ID,
+        document_id="doc-1",
+        chunk_id="chunk-1",
+        vector=[0.1, 0.2],
+        model_id="bge-small",
+        model_version="1",
+    )
+    assert record.status == "active"
+    assert record.acl_principals == []
+
+
+def test_embedding_record_status_rejects_unknown_value() -> None:
+    with pytest.raises(ValidationError):
+        EmbeddingRecord(
+            id="emb-1",
+            tenant_id=TENANT_ID,
+            document_id="doc-1",
+            chunk_id="chunk-1",
+            vector=[0.1, 0.2],
+            model_id="bge-small",
+            model_version="1",
+            status="not-a-real-status",  # type: ignore[arg-type]
+        )
+
+
+def test_vector_type_alias_is_list_of_float() -> None:
+    v: Vector = [0.1, 0.2, 0.3]
+    assert v == [0.1, 0.2, 0.3]
+    assert Vector == list[float]
+
+
+def test_vector_search_hit_is_vendor_neutral() -> None:
+    hit = VectorSearchHit(chunk_id="chunk-1", document_id="doc-1", score=0.87, model_id="bge-small")
+    assert hit.chunk_id == "chunk-1"
+    assert hit.score == 0.87
+
+
+def test_keyword_search_hit_has_no_model_id() -> None:
+    hit = KeywordSearchHit(chunk_id="chunk-1", document_id="doc-1", score=4.2)
+    assert hit.chunk_id == "chunk-1"
+    assert not hasattr(hit, "model_id")
 
 
 def test_query_requires_tenant_id() -> None:

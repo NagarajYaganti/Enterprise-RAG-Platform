@@ -90,6 +90,56 @@ PR #2's `typecheck` job failed in real GitHub Actions even though every local `m
 3. `EmbeddingProvider` adapters (local sentence-transformers + OpenAI/Cohere gated behind API keys) with embedding versioning (`model_id` + `model_version` on `EmbeddingRecord`, already defined in `libs/core/models.py` since Phase 0) and an idempotent embedding worker consuming the parse-complete queue.
 
 ## Phase 2 — Embeddings & vector store
+Status: DONE — exit checklist all PASS (2026-07-19).
+
+### Exit checklist results
+| Item | Result | Evidence |
+|---|---|---|
+| End-to-end: upload file → chunks embedded → searchable in Qdrant + OpenSearch | PASS | `tests/integration/test_embedding_e2e.py` — real upload → ingestion worker → embedding worker → raw Qdrant scroll + real OpenSearch BM25 search both find the document |
+| Tenant isolation: identical docs for 2 tenants, each search returns only own tenant's results | PASS | `tests/integration/test_embedding_tenant_isolation.py` — two tenants upload identical `sample.html`; Qdrant point counts and OpenSearch hits partition exactly by `tenant_id` |
+| Kill worker mid-batch → restart → no dupes, no losses (idempotency) | PASS | `tests/integration/test_embedding_idempotency.py` — direct call crashes after 2/5 chunks, real arq `embed_chunks` job restarts and finishes; final count is exactly 5, all point ids unique |
+| Swap embedding model in config → re-embed pipeline runs, old vectors kept until cutover | PASS | `tests/integration/test_reembed_cutover.py` — real embed pass with the default model, second model's vector added directly, both `active` and coexisting; `cutover()` flips the old model's status to `superseded`, new stays `active` |
+
+Full suite: `uv run pytest -q` → 171 passed. `uv run ruff check .` → clean. `uv run mypy .` → 0 issues in 126 files.
+
+### Done
+- `libs/core`: `Vector` type alias, `EmbeddingStatus` literal, `EmbeddingRecord` extended with `document_id`/`status`/`acl_principals`, new `VectorSearchHit`/`KeywordSearchHit` models; `EmbeddingProvider.embed()` return type tightened to `list[Vector]`; new `KeywordIndex` ABC (phase-directed addition, disclosed not silently added to the fixed 8).
+- `core.model_registry`: `load_models_config`/`get_default_embedding_model`, reading `config/models.yaml` — no model id is ever hardcoded in application code.
+- `config/models.yaml`: added a `version` field to the schema and 3 real embedding entries (`BAAI/bge-small-en-v1.5` local/huggingface with a real measured dimension of 384; `text-embedding-3-small` and `embed-v4.0` gated behind API keys, cost fields marked ASSUMPTION where not confirmed) — all `verified_before_deploy: false` pending human sign-off.
+- `libs/connectors/vectorstores`: `migrations.py` (`ensure_qdrant_collection`, SQLAlchemy-Core-based `ensure_pgvector_table`), `QdrantVectorStore` and `PgvectorStore` — both enforce tenant_id server-side and pre-filter search by ACL principals (`MatchAny`/`.overlap()`), never post-filter.
+- `libs/connectors/keyword`: `OpenSearchIndex` (BM25) with an explicit index mapping (keyword vs text fields) so tenant/ACL/id fields can never fall into OpenSearch's dynamic-mapping-driven analysis.
+- `libs/connectors/embeddings`: `SentenceTransformersProvider` (local BGE model), `OpenAIEmbeddingProvider`, `CohereEmbeddingProvider` — both remote providers layer an outer `tenacity` retry for rate-limit errors on top of the SDK's own `max_retries`.
+- `libs/connectors/erasure.py`: `ErasureService` with a `register(name, hook)` extension point — runs every registered `CleanupHook` even if some fail, collects all failures, then raises. Hard-delete (not status-flip) added to `DocumentRepository`/`ChunkRepository` for the Postgres leg.
+- `services/embedding`: `queue.py` (arq producer), `worker.py` (idempotent `process_embedding_job` with deterministic `uuid5(chunk_id:model_id)` point ids, a hand-built dead-letter queue since arq has none natively, `on_startup` wiring real Qdrant/OpenSearch/model resources), `reembed.py` (`cutover()` — explicit, separate call that supersedes old-model vectors only after confirming active chunks exist), `main.py` (FastAPI `/health`/`/metrics`).
+- `services/ingestion/worker.py`: now enqueues a real `embed_chunks` job (config-driven model id/version) right after a document reaches `PARSED`.
+- CI: added `qdrant` and `opensearch` as GitHub Actions `services:` entries with real healthchecks.
+
+### Four real bugs found and fixed during this phase
+- **Hardcoded model id in worker startup**: `on_startup` originally constructed `SentenceTransformersProvider("BAAI/bge-small-en-v1.5")` directly, violating the "never hardcode model names" rule. Fixed to call `get_default_embedding_model()["id"]`, caught by re-reading the code against CLAUDE.md before writing the e2e test, then confirmed necessary when that test subsequently passed with the fix in place.
+- **Missing collection/index bootstrap**: the real worker never called `ensure_qdrant_collection`/`ensure_index` before use — first real deployment against an empty Qdrant/OpenSearch would fail outright. Fixed by calling both in `on_startup` before constructing the store adapters.
+- **Semantically wrong `model_version`**: the ingestion→embedding enqueue call initially passed `model.get("dimensions", "1")` as `model_version` — caught before running anything, since dimensions is not a version. Fixed by adding a real `version` field to `config/models.yaml`'s schema and using `model["version"]`.
+- **arq's actual retry behavior differs from the initial assumption**: assumed a failed-but-not-exhausted job would sit in the queue for a later, separate burst call to pick up as a "restart." Empirically (via captured tracebacks), arq retries a failed job immediately within the *same* burst call up to `max_tries`, so a naive test using arq's own retry exhausted all tries identically and left nothing to restart. Fixed by redesigning the idempotency test: a direct `_CrashAfterN`-wrapped call for the deterministic "kill mid-batch" step, then the real arq queue+worker only for the "restart" step.
+
+### One test-infrastructure bug found and fixed
+- **Shared production resource names bled state between tests**: all embedding integration tests hit the same hardcoded Qdrant collection / OpenSearch index names the real worker uses, with no cleanup between runs — a prior test's leftover points inflated a later test's "partial count" assertion (5 instead of 2). Fixed with a `clean_embedding_stores` fixture (deletes+recreates the Qdrant collection, deletes the OpenSearch index) applied to every embedding integration test; re-verified passing twice consecutively.
+
+### Stubbed / deferred (intentionally)
+- pgvector is implemented and unit-tested but not exercised by any integration test in this phase — Qdrant is the primary store per the phase task text ("Qdrant primary, pgvector fallback"); pgvector's turn as the tested primary path is implicit fallback-only for now.
+- Re-embed/cutover is proven at the `cutover()` logic level (payload status flip) but not as a live "worker picks up a newly-swapped model from a config change and restarts" scenario — the real worker binds one `SentenceTransformersProvider` to one model id per process lifetime, and a live model swap would require downloading and running a second real embedding model, which was out of scope for cost/time this phase. Documented as an explicit scope note in `test_reembed_cutover.py`'s module docstring, not silently skipped.
+- Cross-tenant ACL search enforcement (searching *with* a caller's principal set) is implemented and unit-tested in `QdrantVectorStore.search`/`PgvectorStore.search`, but end-to-end proof that a real query only returns chunks a specific user is entitled to is Phase 5 (gateway authZ) territory per GAP-MATRIX's phase-1/2/5-spanning ACL row.
+- Erasure (`ErasureService`) covers vectors + keyword index + Postgres hard-delete; it does not yet touch a cache layer, since no cache layer exists before Phase 6.
+
+### Known risks / watch items
+- The dead-letter queue is a plain Redis list (`dlq:embed_chunks`), hand-built since arq has none — no consumer/replay tooling exists yet for it; revisit when an ops/runbook phase needs it.
+- `config/models.yaml`'s OpenAI/Cohere `cost_per_1k_tokens` values are `null`/ASSUMPTION, not confirmed against current provider pricing pages — must be verified before any real deploy that uses cost-based routing.
+- All 3 embedding model entries remain `verified_before_deploy: false`; a human must confirm each against provider docs before production use, per the anti-hallucination rule.
+
+### Top 3 priorities for Phase 3
+1. Hybrid retrieval combining Qdrant vector search and OpenSearch BM25 (reciprocal rank fusion or similar), both already ACL-pre-filtering per this phase's work — Phase 3 wires them together behind one retrieval interface rather than adding new tenant/ACL logic.
+2. Reranker adapter (the 5th of the 8 fixed core ABCs still unimplemented) — cross-encoder or provider-hosted, verified against real installed API before use.
+3. Retrieval-quality evaluation harness (even a minimal golden-query set) so later phases (orchestration, guardrails) have a regression baseline before more moving parts are added.
+
+## Phase 3 — Retrieval & reranking
 (not started)
 
 ## Phase 3 — Retrieval & reranking

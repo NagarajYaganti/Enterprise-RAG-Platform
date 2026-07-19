@@ -140,3 +140,59 @@ def test_supersede_for_document_flips_status_and_is_tenant_scoped(session: Sessi
     tenant_b_chunks = chunk_repo.list_for_document("tenant-b", "doc-1")
     assert len(tenant_b_chunks) == 1
     assert tenant_b_chunks[0].status == "active"
+
+
+def test_document_hard_delete_removes_the_row(session: Session) -> None:
+    doc_repo = DocumentRepository(session)
+    doc_repo.upsert(_make_document("tenant-a", "doc-1", "checksum-1"))
+    session.commit()
+
+    doc_repo.hard_delete("tenant-a", "doc-1")
+    session.commit()
+
+    assert doc_repo.get("tenant-a", "doc-1") is None
+
+
+def test_document_hard_delete_is_tenant_scoped(session: Session) -> None:
+    doc_repo = DocumentRepository(session)
+    doc_repo.upsert(_make_document("tenant-a", "doc-1", "checksum-1"))
+    session.commit()
+
+    doc_repo.hard_delete("tenant-b", "doc-1")
+    session.commit()
+
+    assert doc_repo.get("tenant-a", "doc-1") is not None
+
+
+def test_chunk_hard_delete_for_document_removes_active_and_superseded(
+    session: Session,
+) -> None:
+    chunk_repo = ChunkRepository(session)
+    chunk_repo.bulk_insert([_make_chunk("tenant-a", "doc-1", "chunk-1", version=1)])
+    session.commit()
+    chunk_repo.supersede_for_document("tenant-a", "doc-1")
+    chunk_repo.bulk_insert([_make_chunk("tenant-a", "doc-1", "chunk-2", version=2)])
+    session.commit()
+
+    deleted_count = chunk_repo.hard_delete_for_document("tenant-a", "doc-1")
+    session.commit()
+
+    assert deleted_count == 2
+    assert chunk_repo.list_for_document("tenant-a", "doc-1", active_only=False) == []
+
+
+def test_chunk_hard_delete_for_document_is_tenant_scoped(session: Session) -> None:
+    chunk_repo = ChunkRepository(session)
+    chunk_repo.bulk_insert(
+        [
+            _make_chunk("tenant-a", "doc-1", "chunk-1"),
+            _make_chunk("tenant-b", "doc-1", "chunk-2"),
+        ]
+    )
+    session.commit()
+
+    chunk_repo.hard_delete_for_document("tenant-b", "doc-1")
+    session.commit()
+
+    assert len(chunk_repo.list_for_document("tenant-a", "doc-1")) == 1
+    assert chunk_repo.list_for_document("tenant-b", "doc-1") == []

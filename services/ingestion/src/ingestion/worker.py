@@ -119,7 +119,17 @@ async def parse_document(
             key,
             mime_type,
         )
-        return document.status
+
+    if document.status == "PARSED":
+        from core.model_registry import get_default_embedding_model
+        from embedding.queue import enqueue_embed_job
+
+        model = get_default_embedding_model()
+        await enqueue_embed_job(
+            ctx["redis"], tenant_id, document_id, model["id"], model["version"]
+        )
+
+    return document.status
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:

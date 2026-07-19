@@ -9,6 +9,8 @@ REQUIRED_FIELDS = {
     "id",
     "provider",
     "task",
+    "version",
+    "dimensions",
     "cost_per_1k_tokens",
     "latency_class",
     "languages",
@@ -31,3 +33,12 @@ def test_every_model_entry_matches_schema_and_is_unverified() -> None:
         # No entry may claim to be deploy-verified without a human having
         # actually done so — this repo has no automated verification step.
         assert entry["verified_before_deploy"] is False
+
+
+def test_every_embedding_entry_has_a_dimension() -> None:
+    content = yaml.safe_load(MODELS_YAML.read_text())
+    embedding_entries = [e for e in content["models"] if e["task"] == "embedding"]
+    assert len(embedding_entries) >= 1
+    for entry in embedding_entries:
+        assert isinstance(entry["dimensions"], int)
+        assert entry["dimensions"] > 0
