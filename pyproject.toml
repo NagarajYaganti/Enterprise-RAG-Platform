@@ -1,0 +1,53 @@
+[project]
+name = "rag-platform"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.15.22",
+    "mypy==2.3.0",
+    "httpx2==2.7.0",
+    "types-pyyaml==6.0.12.20260518",
+]
+
+[tool.uv.workspace]
+members = [
+    "services/ingestion",
+    "services/preprocessing",
+    "services/embedding",
+    "services/retrieval",
+    "services/orchestrator",
+    "services/gateway",
+    "libs/core",
+    "libs/connectors",
+    "libs/observability",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["libs", "services", "tests"]
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["core.*", "observability.*"]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+    "libs/core/src",
+    "libs/connectors/src",
+    "libs/observability/src",
+    "services/gateway/src",
+]
