@@ -1,0 +1,17 @@
+# Model registry. Every entry MUST be marked verified_before_deploy: false
+# until a human confirms it against the provider's official docs (see CLAUDE.md
+# anti-hallucination rules). No model_id is ever hardcoded in business logic —
+# code reads this file at runtime via ModelRouter.
+#
+# schema per entry (populated starting Phase 2 embeddings / Phase 4 routing):
+#   id: str                        # provider's model identifier
+#   provider: str                  # e.g. openai, anthropic, cohere, huggingface, self-hosted
+#   task: str                      # embedding | generation | rerank
+#   cost_per_1k_tokens: float
+#   latency_class: str             # e.g. low | medium | high
+#   languages: list[str]
+#   verified_before_deploy: bool   # human has confirmed id/pricing against provider docs
+#   verified_date: str | null      # ISO date of last verification
+#   verified_by: str | null
+
+models: []
