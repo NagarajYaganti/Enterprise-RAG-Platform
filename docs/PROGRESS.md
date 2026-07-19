@@ -40,9 +40,9 @@ Status: DONE — exit checklist all PASS (2026-07-19).
 3. Two chunking strategies (fixed-size + structure-aware) and document versioning/dedupe by checksum, with golden-file tests using real committed sample files (no fabricated fixtures).
 
 ## Phase 1 — Ingestion & preprocessing
-Status: DONE — exit checklist all PASS (2026-07-19).
+Status: DONE — exit checklist re-verified, all PASS (2026-07-19).
 
-### Exit checklist results
+### Exit checklist results (re-run, matching CI's exact environment — no `fixtures` dependency group synced)
 | Item | Result | Evidence |
 |---|---|---|
 | Upload each fixture format via API → status reaches PARSED | PASS | `tests/integration/test_ingestion_e2e.py` — 8/8 formats (pdf, docx, pptx, xlsx, html, png, wav, eml) |
@@ -51,6 +51,10 @@ Status: DONE — exit checklist all PASS (2026-07-19).
 | Second tenant cannot see tenant A's documents | PASS | `tests/integration/test_tenant_isolation.py` — API returns 404 (not 403) cross-tenant; repository layer double-checked independently |
 
 Full suite: `uv run pytest` → 107 passed. `uv run ruff check .` → clean. `uv run mypy` → 0 issues in 87 files.
+
+### Third bug found: local/CI mypy discrepancy (caught via real PR CI, not local runs)
+PR #2's `typecheck` job failed in real GitHub Actions even though every local `mypy` run in this session had passed. Root cause: `tests/fixtures/scripts/generate_fixtures.py` imports `fpdf` (from the `fpdf2` package), which lives in a separate, non-default `fixtures` uv dependency group — deliberately excluded from the standard `uv sync --all-packages` that both local dev and CI's `typecheck`/`test` jobs run, since it's only needed to *regenerate* fixtures, not to run tests against the already-committed ones. Locally, this stayed hidden because an earlier `uv sync --all-packages --group fixtures` (run once to actually generate the fixtures) had left `fpdf2` installed in the local `.venv`, masking the gap — `docx`/`pptx`/`PIL`/`openpyxl` didn't have the same problem because they're transitive dependencies of `unstructured[docx,pptx,xlsx]`, a real (non-fixtures-group) dependency, so they're present regardless. Fixed by adding `types-fpdf2` (confirmed on PyPI, version `2.8.4.20260712`) to the `dev` group. Reproduced and fixed by deleting `.venv` and running `uv sync --all-packages` with no `--group fixtures`, matching CI exactly, before re-confirming green.
+**Lesson**: a clean local `mypy`/`pytest` run is not sufficient evidence once dependency groups diverge between local and CI — this only surfaces by actually observing the real CI job, which is why the "CI runs green on a test PR" checklist item matters as its own check, not a formality.
 
 ### Done
 - `libs/core`: `ParsedDocument` model; `Document`/`Chunk` extended with `language`, `version`, status enums (`DocumentStatus`, `ChunkStatus`), and `acl_principals`; `SourceConnector` and `Translator` interfaces added (phase-directed, not a redesign of the fixed 8).

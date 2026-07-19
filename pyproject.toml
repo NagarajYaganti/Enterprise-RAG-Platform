@@ -13,6 +13,7 @@ dev = [
     "httpx2==2.7.0",
     "types-pyyaml==6.0.12.20260518",
     "types-openpyxl==3.1.5.20260518",
+    "types-fpdf2==2.8.4.20260712",
 ]
 fixtures = [
     "fpdf2==2.8.7",
