@@ -90,17 +90,21 @@ PR #2's `typecheck` job failed in real GitHub Actions even though every local `m
 3. `EmbeddingProvider` adapters (local sentence-transformers + OpenAI/Cohere gated behind API keys) with embedding versioning (`model_id` + `model_version` on `EmbeddingRecord`, already defined in `libs/core/models.py` since Phase 0) and an idempotent embedding worker consuming the parse-complete queue.
 
 ## Phase 2 — Embeddings & vector store
-Status: DONE — exit checklist all PASS (2026-07-19).
+Status: DONE — exit checklist re-verified, all PASS (2026-07-19).
 
-### Exit checklist results
+### Exit checklist results (re-run, matching CI's exact environment — `.venv` rebuilt from scratch with plain `uv sync --all-packages`, no `fixtures` group synced)
 | Item | Result | Evidence |
 |---|---|---|
-| End-to-end: upload file → chunks embedded → searchable in Qdrant + OpenSearch | PASS | `tests/integration/test_embedding_e2e.py` — real upload → ingestion worker → embedding worker → raw Qdrant scroll + real OpenSearch BM25 search both find the document |
-| Tenant isolation: identical docs for 2 tenants, each search returns only own tenant's results | PASS | `tests/integration/test_embedding_tenant_isolation.py` — two tenants upload identical `sample.html`; Qdrant point counts and OpenSearch hits partition exactly by `tenant_id` |
-| Kill worker mid-batch → restart → no dupes, no losses (idempotency) | PASS | `tests/integration/test_embedding_idempotency.py` — direct call crashes after 2/5 chunks, real arq `embed_chunks` job restarts and finishes; final count is exactly 5, all point ids unique |
-| Swap embedding model in config → re-embed pipeline runs, old vectors kept until cutover | PASS | `tests/integration/test_reembed_cutover.py` — real embed pass with the default model, second model's vector added directly, both `active` and coexisting; `cutover()` flips the old model's status to `superseded`, new stays `active` |
+| End-to-end: upload file → chunks embedded → searchable in Qdrant + OpenSearch | PASS | `uv run pytest tests/integration/test_embedding_e2e.py -v` → `1 passed` — real upload → ingestion worker → embedding worker → raw Qdrant scroll + real OpenSearch BM25 search both find the document |
+| Tenant isolation: identical docs for 2 tenants, each search returns only own tenant's results | PASS | `uv run pytest tests/integration/test_embedding_tenant_isolation.py -v` → `1 passed` — two tenants upload identical `sample.html`; Qdrant point counts and OpenSearch hits partition exactly by `tenant_id` |
+| Kill worker mid-batch → restart → no dupes, no losses (idempotency) | PASS | `uv run pytest tests/integration/test_embedding_idempotency.py -v` → `1 passed` — direct call crashes after 2/5 chunks, real arq `embed_chunks` job restarts and finishes; final count is exactly 5, all point ids unique |
+| Swap embedding model in config → re-embed pipeline runs, old vectors kept until cutover | PASS | `uv run pytest tests/integration/test_reembed_cutover.py -v` → `1 passed` — real embed pass with the default model, second model's vector added directly, both `active` and coexisting; `cutover()` flips the old model's status to `superseded`, new stays `active` |
 
-Full suite: `uv run pytest -q` → 171 passed. `uv run ruff check .` → clean. `uv run mypy .` → 0 issues in 126 files.
+Full suite: `uv run pytest -v` → `171 passed, 22 warnings in 105.62s`. `uv run ruff check .` → `All checks passed!`. `uv run mypy .` → `Success: no issues found in 126 source files`.
+
+### Fifth bug found: OpenSearch flood-stage disk watermark blocked index creation (caught during checklist re-verification, not by any unit test)
+Re-running the checklist after rebuilding `.venv` from scratch (to match CI's exact `uv sync --all-packages`, per the Phase 1 lesson that local/CI environments can silently diverge) pulled ~7GB of ML dependencies (`torch`, `transformers`, etc.) into `~/.cache/uv`, pushing the sandbox disk to 94% used. OpenSearch's disk-based allocation decider hit its flood-stage watermark (95%) and set a cluster-wide `cluster.blocks.create_index` persistent setting, which is not a per-index `read_only_allow_delete` block (the more commonly documented flood-stage behavior) — it rejects *creating* any new index outright. `test_embedding_e2e.py` failed with a real `opensearchpy.exceptions.AuthorizationException: ... cluster create-index blocked (api)` when the worker's `on_startup` tried to `ensure_index`. Root cause confirmed via `GET _cluster/settings` and `df -h`. Fixed by freeing disk (`uv cache clean`, safe and fully reconstructable — reclaimed 6.4GB) and explicitly clearing the stale persistent setting (`PUT _cluster/settings {"persistent": {"cluster.blocks.create_index": null}}`), since the block does not auto-clear even after the underlying disk pressure resolves. Re-ran the affected test standalone, then as part of the full suite, both green.
+**Lesson**: this is an environment/ops risk, not an application bug — the embedding worker code did nothing wrong. But it's a real failure mode worth carrying forward: any environment where uv's package cache and OpenSearch's data volume share a disk (true in this sandbox, plausibly true in some deployment setups too) can silently wedge index creation well before "disk full" would be obvious from application logs alone. Logged as a known risk below rather than treated as a one-off fluke.
 
 ### Done
 - `libs/core`: `Vector` type alias, `EmbeddingStatus` literal, `EmbeddingRecord` extended with `document_id`/`status`/`acl_principals`, new `VectorSearchHit`/`KeywordSearchHit` models; `EmbeddingProvider.embed()` return type tightened to `list[Vector]`; new `KeywordIndex` ABC (phase-directed addition, disclosed not silently added to the fixed 8).
@@ -130,6 +134,7 @@ Full suite: `uv run pytest -q` → 171 passed. `uv run ruff check .` → clean. 
 - Erasure (`ErasureService`) covers vectors + keyword index + Postgres hard-delete; it does not yet touch a cache layer, since no cache layer exists before Phase 6.
 
 ### Known risks / watch items
+- **Disk pressure can silently wedge OpenSearch index creation**: uv's package cache (large due to `torch`/`transformers`/`sentence-transformers`) and OpenSearch's data volume share the same disk in this sandbox; crossing OpenSearch's 95% flood-stage watermark sets a persistent `cluster.blocks.create_index` setting that does not auto-clear once disk pressure resolves — it must be explicitly unset (`PUT _cluster/settings`). Watch for this in CI runners or any deployment where disk is shared/constrained; consider a disk-space assertion in CI or a documented runbook step (`PUT _cluster/settings {"persistent": {"cluster.blocks.create_index": null}}`) rather than rediscovering it under pressure.
 - The dead-letter queue is a plain Redis list (`dlq:embed_chunks`), hand-built since arq has none — no consumer/replay tooling exists yet for it; revisit when an ops/runbook phase needs it.
 - `config/models.yaml`'s OpenAI/Cohere `cost_per_1k_tokens` values are `null`/ASSUMPTION, not confirmed against current provider pricing pages — must be verified before any real deploy that uses cost-based routing.
 - All 3 embedding model entries remain `verified_before_deploy: false`; a human must confirm each against provider docs before production use, per the anti-hallucination rule.
