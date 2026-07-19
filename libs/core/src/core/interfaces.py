@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-from core.models import Chunk, ParsedDocument
+from core.models import Chunk, ParsedDocument, Vector
 
 
 class DocumentParser(ABC):
@@ -35,7 +35,7 @@ class Chunker(ABC):
 
 class EmbeddingProvider(ABC):
     @abstractmethod
-    def embed(self, texts: list[str], model_id: str) -> list[Any]:
+    def embed(self, texts: list[str], model_id: str) -> list[Vector]:
         """Embed a batch of texts with the given model into Vectors."""
 
 
@@ -105,3 +105,24 @@ class Translator(ABC):
     @abstractmethod
     def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Translate text from source_lang to target_lang."""
+
+
+class KeywordIndex(ABC):
+    """Phase-2 addition (per Section 4 Phase 2 task text: "Keyword index:
+    OpenSearch adapter (BM25) with same tenant enforcement"). Not one of the
+    original 8 core interfaces — mirrors VectorStore's shape since both are
+    tenant-scoped search backends. A phase-directed extension, not a
+    redesign of the fixed contract.
+    """
+
+    @abstractmethod
+    def upsert(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
+        """Insert or update keyword-index entries for a tenant."""
+
+    @abstractmethod
+    def search(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
+        """BM25 search scoped to a tenant."""
+
+    @abstractmethod
+    def delete(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
+        """Delete keyword-index entries scoped to a tenant."""

@@ -1,5 +1,8 @@
+from typing import Any, cast
+
 from core.models import Chunk, Document
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from connectors.postgres.orm import ChunkORM, DocumentORM
@@ -76,6 +79,16 @@ class DocumentRepository:
         rows = self._session.execute(stmt).scalars().all()
         return [_document_to_model(row) for row in rows]
 
+    def hard_delete(self, tenant_id: str, document_id: str) -> None:
+        """Real SQL DELETE, not a status flip — the erasure/GDPR path.
+        Tenant-scoped: a document_id belonging to another tenant is a no-op.
+        """
+        stmt = delete(DocumentORM).where(
+            DocumentORM.tenant_id == tenant_id, DocumentORM.id == document_id
+        )
+        self._session.execute(stmt)
+        self._session.flush()
+
 
 class ChunkRepository:
     def __init__(self, session: Session) -> None:
@@ -125,3 +138,15 @@ class ChunkRepository:
         stmt = select(ChunkORM).where(ChunkORM.tenant_id == tenant_id)
         rows = self._session.execute(stmt).scalars().all()
         return [_chunk_to_model(row) for row in rows]
+
+    def hard_delete_for_document(self, tenant_id: str, document_id: str) -> int:
+        """Real SQL DELETE of every chunk (active or superseded) for a
+        document — the erasure/GDPR path, distinct from supersede_for_document
+        which only flips status. Returns the number of rows deleted.
+        """
+        stmt = delete(ChunkORM).where(
+            ChunkORM.tenant_id == tenant_id, ChunkORM.document_id == document_id
+        )
+        result = cast("CursorResult[Any]", self._session.execute(stmt))
+        self._session.flush()
+        return result.rowcount

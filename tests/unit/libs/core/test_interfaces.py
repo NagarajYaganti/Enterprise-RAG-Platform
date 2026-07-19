@@ -6,6 +6,7 @@ from core.interfaces import (
     DocumentParser,
     EmbeddingProvider,
     Guardrail,
+    KeywordIndex,
     LLMProvider,
     ModelRouter,
     Reranker,
@@ -13,7 +14,7 @@ from core.interfaces import (
     Translator,
     VectorStore,
 )
-from core.models import ParsedDocument
+from core.models import ParsedDocument, Vector
 
 ALL_INTERFACES = [
     DocumentParser,
@@ -26,6 +27,7 @@ ALL_INTERFACES = [
     Guardrail,
     SourceConnector,
     Translator,
+    KeywordIndex,
 ]
 
 
@@ -107,3 +109,29 @@ def test_minimal_stub_satisfies_vector_store() -> None:
     assert store.upsert("tenant-acme") == "upserted:tenant-acme"
     assert store.search("tenant-acme") == []
     assert store.delete("tenant-acme") is True
+
+
+def test_minimal_stub_satisfies_embedding_provider() -> None:
+    class StubEmbeddingProvider(EmbeddingProvider):
+        def embed(self, texts: list[str], model_id: str) -> list[Vector]:
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+    result = StubEmbeddingProvider().embed(["hello", "world"], "stub-model")
+    assert result == [[0.1, 0.2, 0.3], [0.1, 0.2, 0.3]]
+
+
+def test_minimal_stub_satisfies_keyword_index() -> None:
+    class StubKeywordIndex(KeywordIndex):
+        def upsert(self, tenant_id: str, *args: object, **kwargs: object) -> str:
+            return f"upserted:{tenant_id}"
+
+        def search(self, tenant_id: str, *args: object, **kwargs: object) -> list[object]:
+            return []
+
+        def delete(self, tenant_id: str, *args: object, **kwargs: object) -> bool:
+            return True
+
+    index = StubKeywordIndex()
+    assert index.upsert("tenant-acme") == "upserted:tenant-acme"
+    assert index.search("tenant-acme") == []
+    assert index.delete("tenant-acme") is True

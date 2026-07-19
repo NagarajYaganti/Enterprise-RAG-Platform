@@ -1,0 +1,2 @@
+class TenantMismatchError(ValueError):
+    pass

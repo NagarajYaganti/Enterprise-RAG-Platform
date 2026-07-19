@@ -7,7 +7,12 @@
 #   id: str                        # provider's model identifier
 #   provider: str                  # e.g. openai, anthropic, cohere, huggingface, self-hosted
 #   task: str                      # embedding | generation | rerank | stt | ocr
-#   cost_per_1k_tokens: float
+#   version: str                   # OUR internal config revision for this entry (not the
+#                                   # provider's own model version) — bump when re-pinning
+#                                   # this entry to a different id/params, so EmbeddingRecord
+#                                   # can distinguish "same model_id, re-verified config" too
+#   dimensions: int | null         # embedding output size; required for embedding-task entries
+#   cost_per_1k_tokens: float | null  # null if not yet verified from a live source
 #   latency_class: str             # e.g. low | medium | high
 #   languages: list[str]
 #   verified_before_deploy: bool   # human has confirmed id/pricing against provider docs
@@ -18,9 +23,55 @@ models:
   - id: tiny
     provider: faster-whisper
     task: stt
+    version: "1"
+    dimensions: null
     cost_per_1k_tokens: 0.0
     latency_class: low
     languages: ["en"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  # id/dimensions below were fetched from provider docs during planning
+  # (2026-07-19) — https://developers.openai.com/api/docs/guides/embeddings
+  # and https://docs.cohere.com/docs/cohere-embed — not from memory.
+  # cost_per_1k_tokens is ASSUMPTION: null — per-token pricing could not be
+  # confirmed from a live source this session (OpenAI's pricing page blocked
+  # the fetch; Cohere's pricing page only showed hourly/monthly instance
+  # rates, not per-token). Do not fabricate a plausible-looking number —
+  # a human must fill this in from a verified source before deploy.
+  - id: BAAI/bge-small-en-v1.5
+    provider: huggingface
+    task: embedding
+    version: "1"
+    dimensions: 384
+    cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
+    latency_class: low
+    languages: ["en"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  - id: text-embedding-3-small
+    provider: openai
+    task: embedding
+    version: "1"
+    dimensions: 1536
+    cost_per_1k_tokens: null   # ASSUMPTION: unverified, see note above
+    latency_class: low
+    languages: ["multilingual"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  - id: embed-v4.0
+    provider: cohere
+    task: embedding
+    version: "1"
+    dimensions: 1536
+    cost_per_1k_tokens: null   # ASSUMPTION: unverified, see note above
+    latency_class: low
+    languages: ["multilingual"]
     verified_before_deploy: false
     verified_date: null
     verified_by: null

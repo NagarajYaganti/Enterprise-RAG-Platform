@@ -12,6 +12,7 @@ dependencies = [
     "boto3==1.43.51",
     "connectors",
     "core",
+    "embedding",
     "fastapi==0.139.2",
     "observability",
     "prometheus-client==0.25.0",
@@ -29,3 +30,4 @@ build-backend = "uv_build"
 core = { workspace = true }
 observability = { workspace = true }
 connectors = { workspace = true }
+embedding = { workspace = true }
