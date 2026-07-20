@@ -7,6 +7,7 @@ from core.interfaces import (
     EmbeddingProvider,
     Guardrail,
     KeywordIndex,
+    KnowledgeGraph,
     LLMProvider,
     ModelRouter,
     Reranker,
@@ -28,6 +29,7 @@ ALL_INTERFACES = [
     SourceConnector,
     Translator,
     KeywordIndex,
+    KnowledgeGraph,
 ]
 
 
@@ -135,3 +137,20 @@ def test_minimal_stub_satisfies_keyword_index() -> None:
     assert index.upsert("tenant-acme") == "upserted:tenant-acme"
     assert index.search("tenant-acme") == []
     assert index.delete("tenant-acme") is True
+
+
+def test_minimal_stub_satisfies_knowledge_graph() -> None:
+    class StubKnowledgeGraph(KnowledgeGraph):
+        def upsert_entities(self, tenant_id: str, *args: object, **kwargs: object) -> str:
+            return f"entities:{tenant_id}"
+
+        def upsert_relations(self, tenant_id: str, *args: object, **kwargs: object) -> str:
+            return f"relations:{tenant_id}"
+
+        def query_subgraph(self, tenant_id: str, *args: object, **kwargs: object) -> list[object]:
+            return []
+
+    graph = StubKnowledgeGraph()
+    assert graph.upsert_entities("tenant-acme") == "entities:tenant-acme"
+    assert graph.upsert_relations("tenant-acme") == "relations:tenant-acme"
+    assert graph.query_subgraph("tenant-acme") == []

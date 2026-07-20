@@ -7,8 +7,23 @@ authors = [
     { name = "NagarajYaganti", email = "39370970+NagarajYaganti@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "connectors",
+    "core",
+    "fastapi==0.139.2",
+    "observability",
+    "prometheus-client==0.25.0",
+    "psycopg[binary]==3.3.4",
+    "pydantic-settings==2.14.2",
+    "sqlalchemy==2.0.51",
+    "uvicorn[standard]==0.51.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.29,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+core = { workspace = true }
+connectors = { workspace = true }
+observability = { workspace = true }

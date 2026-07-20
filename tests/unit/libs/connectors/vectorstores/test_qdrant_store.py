@@ -27,6 +27,10 @@ def _record(
     vector: list[float],
     principals: list[str],
     model_id: str = "bge-small",
+    language: str = "",
+    doc_type: str | None = None,
+    department: str | None = None,
+    date: str | None = None,
 ) -> EmbeddingRecord:
     # Qdrant point IDs must be an unsigned int or a UUID (verified against the
     # real API) — id and chunk_id are deliberately different here: id is a
@@ -42,6 +46,10 @@ def _record(
         model_id=model_id,
         model_version="1",
         acl_principals=principals,
+        language=language,
+        doc_type=doc_type,
+        department=department,
+        date=date,
     )
 
 
@@ -156,3 +164,127 @@ def test_supersede_by_model_flips_status_for_matching_model_only(client: QdrantC
         "tenant-a", [0.1, 0.2, 0.3, 0.4], principals=["p1"], top_k=10, status="superseded"
     )
     assert {h.model_id for h in superseded_hits} == {"old-model"}
+
+
+def test_search_with_no_filters_is_unconstrained_on_metadata(client: QdrantClient) -> None:
+    store = QdrantVectorStore(client, COLLECTION)
+    store.upsert(
+        "tenant-a",
+        [
+            _record(
+                "tenant-a",
+                "c9",
+                [0.1, 0.2, 0.3, 0.4],
+                ["p1"],
+                doc_type="policy",
+                department="lending",
+            ),
+            _record(
+                "tenant-a",
+                "c10",
+                [0.1, 0.2, 0.3, 0.4],
+                ["p1"],
+                doc_type="report",
+                department="sales",
+            ),
+        ],
+    )
+
+    hits = store.search("tenant-a", [0.1, 0.2, 0.3, 0.4], principals=["p1"], top_k=10)
+
+    assert {h.chunk_id for h in hits} == {"c9", "c10"}
+
+
+def test_search_doc_type_filter_excludes_non_matching(client: QdrantClient) -> None:
+    store = QdrantVectorStore(client, COLLECTION)
+    store.upsert(
+        "tenant-a",
+        [
+            _record("tenant-a", "c11", [0.1, 0.2, 0.3, 0.4], ["p1"], doc_type="policy"),
+            _record("tenant-a", "c12", [0.1, 0.2, 0.3, 0.4], ["p1"], doc_type="report"),
+        ],
+    )
+
+    hits = store.search(
+        "tenant-a", [0.1, 0.2, 0.3, 0.4], principals=["p1"], top_k=10, doc_type="policy"
+    )
+
+    assert {h.chunk_id for h in hits} == {"c11"}
+
+
+def test_search_department_filter_excludes_non_matching(client: QdrantClient) -> None:
+    store = QdrantVectorStore(client, COLLECTION)
+    store.upsert(
+        "tenant-a",
+        [
+            _record("tenant-a", "c13", [0.1, 0.2, 0.3, 0.4], ["p1"], department="lending"),
+            _record("tenant-a", "c14", [0.1, 0.2, 0.3, 0.4], ["p1"], department="claims"),
+        ],
+    )
+
+    hits = store.search(
+        "tenant-a", [0.1, 0.2, 0.3, 0.4], principals=["p1"], top_k=10, department="lending"
+    )
+
+    assert {h.chunk_id for h in hits} == {"c13"}
+
+
+def test_search_language_filter_excludes_non_matching(client: QdrantClient) -> None:
+    store = QdrantVectorStore(client, COLLECTION)
+    store.upsert(
+        "tenant-a",
+        [
+            _record("tenant-a", "c15", [0.1, 0.2, 0.3, 0.4], ["p1"], language="en"),
+            _record("tenant-a", "c16", [0.1, 0.2, 0.3, 0.4], ["p1"], language="es"),
+        ],
+    )
+
+    hits = store.search(
+        "tenant-a", [0.1, 0.2, 0.3, 0.4], principals=["p1"], top_k=10, language="en"
+    )
+
+    assert {h.chunk_id for h in hits} == {"c15"}
+
+
+def test_search_date_range_filter_excludes_out_of_range(client: QdrantClient) -> None:
+    store = QdrantVectorStore(client, COLLECTION)
+    store.upsert(
+        "tenant-a",
+        [
+            _record("tenant-a", "c17", [0.1, 0.2, 0.3, 0.4], ["p1"], date="2026-01-01"),
+            _record("tenant-a", "c18", [0.1, 0.2, 0.3, 0.4], ["p1"], date="2026-06-01"),
+            _record("tenant-a", "c19", [0.1, 0.2, 0.3, 0.4], ["p1"], date="2026-12-01"),
+        ],
+    )
+
+    hits = store.search(
+        "tenant-a",
+        [0.1, 0.2, 0.3, 0.4],
+        principals=["p1"],
+        top_k=10,
+        date_from="2026-05-01",
+        date_to="2026-11-01",
+    )
+
+    assert {h.chunk_id for h in hits} == {"c18"}
+
+
+def test_search_filter_excludes_points_missing_the_field(client: QdrantClient) -> None:
+    """A provided filter value must exclude chunks that never set that
+    field at all — the None-means-unconstrained rule only applies when the
+    caller doesn't pass a value.
+    """
+    store = QdrantVectorStore(client, COLLECTION)
+    store.upsert(
+        "tenant-a",
+        [
+            _record("tenant-a", "c20", [0.1, 0.2, 0.3, 0.4], ["p1"], doc_type="policy"),
+            _record("tenant-a", "c21", [0.1, 0.2, 0.3, 0.4], ["p1"], doc_type=None),
+        ],
+    )
+
+    hits = store.search(
+        "tenant-a", [0.1, 0.2, 0.3, 0.4], principals=["p1"], top_k=10, doc_type="policy"
+    )
+
+    assert {h.chunk_id for h in hits} == {"c20"}

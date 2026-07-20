@@ -67,4 +67,5 @@ pythonpath = [
     "services/ingestion/src",
     "services/preprocessing/src",
     "services/embedding/src",
+    "services/retrieval/src",
 ]

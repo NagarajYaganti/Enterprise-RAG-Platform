@@ -1,11 +1,11 @@
 from typing import Any, cast
 
-from core.models import Chunk, Document
+from core.models import ChatTurn, Chunk, Document
 from sqlalchemy import delete, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from connectors.postgres.orm import ChunkORM, DocumentORM
+from connectors.postgres.orm import ChatTurnORM, ChunkORM, DocumentORM
 
 
 def _document_to_model(row: DocumentORM) -> Document:
@@ -21,6 +21,18 @@ def _document_to_model(row: DocumentORM) -> Document:
     )
 
 
+def _chat_turn_to_model(row: ChatTurnORM) -> ChatTurn:
+    return ChatTurn(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        user_id=row.user_id,
+        session_id=row.session_id,
+        role=row.role,  # type: ignore[arg-type]
+        text=row.text,
+        created_at=row.created_at,
+    )
+
+
 def _chunk_to_model(row: ChunkORM) -> Chunk:
     return Chunk(
         id=row.id,
@@ -33,6 +45,9 @@ def _chunk_to_model(row: ChunkORM) -> Chunk:
         status=row.status,  # type: ignore[arg-type]
         acl_principals=list(row.acl_principals),
         metadata=dict(row.chunk_metadata),
+        doc_type=row.doc_type,
+        department=row.department,
+        date=row.date,
     )
 
 
@@ -107,6 +122,9 @@ class ChunkRepository:
                 status=chunk.status,
                 acl_principals=list(chunk.acl_principals),
                 chunk_metadata=dict(chunk.metadata),
+                doc_type=chunk.doc_type,
+                department=chunk.department,
+                date=chunk.date,
             )
             self._session.add(row)
         self._session.flush()
@@ -119,6 +137,20 @@ class ChunkRepository:
         )
         if active_only:
             stmt = stmt.where(ChunkORM.status == "active")
+        rows = self._session.execute(stmt).scalars().all()
+        return [_chunk_to_model(row) for row in rows]
+
+    def get_by_ids(self, tenant_id: str, chunk_ids: list[str]) -> list[Chunk]:
+        """Phase-3 addition: retrieval hydrates full Chunk objects (text,
+        metadata) from a fused ranked list of chunk_ids before reranking —
+        tenant-scoped like every other query here, so a chunk_id belonging
+        to another tenant is silently excluded, not just filtered client-side.
+        """
+        if not chunk_ids:
+            return []
+        stmt = select(ChunkORM).where(
+            ChunkORM.tenant_id == tenant_id, ChunkORM.id.in_(chunk_ids)
+        )
         rows = self._session.execute(stmt).scalars().all()
         return [_chunk_to_model(row) for row in rows]
 
@@ -150,3 +182,44 @@ class ChunkRepository:
         result = cast("CursorResult[Any]", self._session.execute(stmt))
         self._session.flush()
         return result.rowcount
+
+
+class ChatSessionRepository:
+    """Phase-3 addition: ChatSession keyed by tenant + user + session (per
+    Section 4 Phase 3 task text). tenant_id is always a mandatory filter,
+    matching the "impossible to query without tenant_id" pattern from every
+    other repository in this file.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def append_turn(self, turn: ChatTurn) -> ChatTurn:
+        row = ChatTurnORM(
+            id=turn.id,
+            tenant_id=turn.tenant_id,
+            user_id=turn.user_id,
+            session_id=turn.session_id,
+            role=turn.role,
+            text=turn.text,
+            created_at=turn.created_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _chat_turn_to_model(row)
+
+    def get_history(
+        self, tenant_id: str, user_id: str, session_id: str, *, limit: int = 20
+    ) -> list[ChatTurn]:
+        stmt = (
+            select(ChatTurnORM)
+            .where(
+                ChatTurnORM.tenant_id == tenant_id,
+                ChatTurnORM.user_id == user_id,
+                ChatTurnORM.session_id == session_id,
+            )
+            .order_by(ChatTurnORM.created_at)
+            .limit(limit)
+        )
+        rows = self._session.execute(stmt).scalars().all()
+        return [_chat_turn_to_model(row) for row in rows]

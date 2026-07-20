@@ -75,3 +75,74 @@ models:
     verified_before_deploy: false
     verified_date: null
     verified_by: null
+
+  # id below was confirmed via a raw `curl` of the HuggingFace Hub API
+  # during Phase 3 planning (2026-07-20) — a direct, unmediated JSON
+  # response, not a paraphrase. High confidence on the id itself; pricing/
+  # deploy suitability still require human sign-off per policy.
+  - id: cross-encoder/ms-marco-MiniLM-L6-v2
+    provider: huggingface
+    task: rerank
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
+    latency_class: low
+    languages: ["en"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  # id below is cited from Cohere's rerank docs (docs.cohere.com/v2/docs/
+  # rerank-overview), fetched during Phase 3 planning (2026-07-20).
+  # cost_per_1k_tokens is ASSUMPTION: Cohere prices rerank per search unit,
+  # not per token — no per-1k-token figure could be honestly derived from
+  # the fetched page. Do not fabricate a converted number.
+  - id: rerank-v3.5
+    provider: cohere
+    task: rerank
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: null   # ASSUMPTION: unverified, see note above
+    latency_class: low
+    languages: ["multilingual"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  # id and the $1/M-input-token figure below came from a WebFetch of
+  # developers.openai.com/api/docs/models during Phase 3 planning
+  # (2026-07-20). WebFetch summarizes fetched content through an
+  # intermediate model before returning it (per the tool's own
+  # description) — this is one step removed from a raw API/docs response,
+  # unlike the HuggingFace entries above which came from raw curl JSON.
+  # Treat this id and price as LOWER CONFIDENCE than the other entries in
+  # this file — a human must re-verify directly against the live page
+  # before deploy, not just re-trust this fetch.
+  - id: gpt-5.6-luna
+    provider: openai
+    task: generation
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.001   # derived from "$1 / Input MTok" ÷ 1000; output price unconfirmed
+    latency_class: low
+    languages: ["multilingual"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  # GraphRAG (optional, flagged OFF by default): local NER model for entity
+  # extraction, not an LLM. id/compatibility (spacy>=3.8.0,<3.9.0) verified
+  # against the real explosion/spacy-models GitHub release and installed
+  # locally during Phase 3 (2026-07-20) — pinned as a direct wheel
+  # dependency in libs/connectors/pyproject.toml, not a runtime download.
+  - id: en_core_web_sm
+    provider: spacy
+    task: ner
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
+    latency_class: low
+    languages: ["en"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null

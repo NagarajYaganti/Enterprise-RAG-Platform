@@ -1,7 +1,16 @@
+import datetime
+
 from core.interfaces import VectorStore
 from core.models import EmbeddingRecord, VectorSearchHit
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue, PointStruct
+from qdrant_client.models import (
+    DatetimeRange,
+    FieldCondition,
+    Filter,
+    MatchAny,
+    MatchValue,
+    PointStruct,
+)
 
 from connectors.vectorstores.errors import TenantMismatchError
 
@@ -36,6 +45,10 @@ class QdrantVectorStore(VectorStore):
                     "model_version": record.model_version,
                     "status": record.status,
                     "acl_principals": record.acl_principals,
+                    "language": record.language,
+                    "doc_type": record.doc_type,
+                    "department": record.department,
+                    "date": record.date,
                 },
             )
             for record in records
@@ -49,14 +62,39 @@ class QdrantVectorStore(VectorStore):
         principals: list[str],
         top_k: int = 10,
         status: str = "active",
+        language: str | None = None,
+        doc_type: str | None = None,
+        department: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> list[VectorSearchHit]:
-        query_filter = Filter(
-            must=[
-                FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
-                FieldCondition(key="status", match=MatchValue(value=status)),
-                FieldCondition(key="acl_principals", match=MatchAny(any=principals)),
-            ]
-        )
+        must: list[FieldCondition] = [
+            FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+            FieldCondition(key="status", match=MatchValue(value=status)),
+            FieldCondition(key="acl_principals", match=MatchAny(any=principals)),
+        ]
+        # Metadata filters: a dimension left as None is unconstrained, never
+        # translated into a condition — a provided value is an exact/range
+        # match that excludes points missing that field. Verified empirically
+        # against the real running Qdrant that DatetimeRange filters plain
+        # ISO date strings correctly with no special encoding needed.
+        if language is not None:
+            must.append(FieldCondition(key="language", match=MatchValue(value=language)))
+        if doc_type is not None:
+            must.append(FieldCondition(key="doc_type", match=MatchValue(value=doc_type)))
+        if department is not None:
+            must.append(FieldCondition(key="department", match=MatchValue(value=department)))
+        if date_from is not None or date_to is not None:
+            must.append(
+                FieldCondition(
+                    key="date",
+                    range=DatetimeRange(
+                        gte=datetime.date.fromisoformat(date_from) if date_from else None,
+                        lte=datetime.date.fromisoformat(date_to) if date_to else None,
+                    ),
+                )
+            )
+        query_filter = Filter(must=must)  # type: ignore[arg-type]
         result = self._client.query_points(
             self._collection_name, query=query_vector, query_filter=query_filter, limit=top_k
         )
