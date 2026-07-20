@@ -494,6 +494,7 @@ dependencies = [
     { name = "boto3" },
     { name = "cohere" },
     { name = "core" },
+    { name = "en-core-web-sm" },
     { name = "extract-msg" },
     { name = "faster-whisper" },
     { name = "httpx" },
@@ -505,6 +506,7 @@ dependencies = [
     { name = "pytesseract" },
     { name = "qdrant-client" },
     { name = "sentence-transformers" },
+    { name = "spacy" },
     { name = "sqlalchemy" },
     { name = "tenacity" },
     { name = "unstructured", extra = ["docx", "pdf", "pptx", "xlsx"] },
@@ -516,6 +518,7 @@ requires-dist = [
     { name = "boto3", specifier = "==1.43.51" },
     { name = "cohere", specifier = "==7.0.5" },
     { name = "core", editable = "libs/core" },
+    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "extract-msg", specifier = "==0.56.0" },
     { name = "faster-whisper", specifier = "==1.2.1" },
     { name = "httpx", specifier = "==0.28.1" },
@@ -527,6 +530,7 @@ requires-dist = [
     { name = "pytesseract", specifier = "==0.3.13" },
     { name = "qdrant-client", specifier = "==1.18.0" },
     { name = "sentence-transformers", specifier = "==5.6.0" },
+    { name = "spacy", specifier = "==3.8.14" },
     { name = "sqlalchemy", specifier = "==2.0.51" },
     { name = "tenacity", specifier = "==9.1.4" },
     { name = "unstructured", extras = ["docx", "pdf", "pptx", "xlsx"], specifier = "==0.24.1" },
@@ -905,6 +909,14 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/78/0d2db9382c92a163d7095fc08efff7800880f830a152cfced40161e7638d/emoji-2.15.0.tar.gz", hash = "sha256:eae4ab7d86456a70a00a985125a03263a5eac54cd55e51d7e184b1ed3b6757e4", size = 615483, upload-time = "2025-09-21T12:13:02.755Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/5e/4b5aaaabddfacfe36ba7768817bd1f71a7a810a43705e531f3ae4c690767/emoji-2.15.0-py3-none-any.whl", hash = "sha256:205296793d66a89d88af4688fa57fd6496732eb48917a87175a023c8138995eb", size = 608433, upload-time = "2025-09-21T12:13:01.197Z" },
+]
+
+[[package]]
+name = "en-core-web-sm"
+version = "3.8.0"
+source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+wheels = [
+    { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
 ]
 
 [[package]]
@@ -6832,6 +6844,30 @@ wheels = [
 name = "retrieval"
 version = "0.1.0"
 source = { editable = "services/retrieval" }
+dependencies = [
+    { name = "connectors" },
+    { name = "core" },
+    { name = "fastapi" },
+    { name = "observability" },
+    { name = "prometheus-client" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic-settings" },
+    { name = "sqlalchemy" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "connectors", editable = "libs/connectors" },
+    { name = "core", editable = "libs/core" },
+    { name = "fastapi", specifier = "==0.139.2" },
+    { name = "observability", editable = "libs/observability" },
+    { name = "prometheus-client", specifier = "==0.25.0" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.3.4" },
+    { name = "pydantic-settings", specifier = "==2.14.2" },
+    { name = "sqlalchemy", specifier = "==2.0.51" },
+    { name = "uvicorn", extras = ["standard"], specifier = "==0.51.0" },
+]
 
 [[package]]
 name = "rich"

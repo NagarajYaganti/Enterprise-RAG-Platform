@@ -126,3 +126,24 @@ class KeywordIndex(ABC):
     @abstractmethod
     def delete(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
         """Delete keyword-index entries scoped to a tenant."""
+
+
+class KnowledgeGraph(ABC):
+    """Phase-3 addition (per Section 4 Phase 3 task text: "GraphRAG
+    (optional, flagged OFF): KnowledgeGraph interface + entity/relation
+    extraction pipeline"). Not one of the original 8 core interfaces — a
+    phase-directed extension, not a redesign of the fixed contract.
+    Off-by-default; only exercised when GraphRAG is enabled for a tenant.
+    """
+
+    @abstractmethod
+    def upsert_entities(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
+        """Insert or update extracted entities for a tenant."""
+
+    @abstractmethod
+    def upsert_relations(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
+        """Insert or update extracted relations for a tenant."""
+
+    @abstractmethod
+    def query_subgraph(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
+        """Query a subgraph scoped to a tenant, e.g. by entity names."""

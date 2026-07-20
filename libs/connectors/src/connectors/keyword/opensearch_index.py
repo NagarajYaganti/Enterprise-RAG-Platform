@@ -12,6 +12,16 @@ INDEX_MAPPING = {
             "document_id": {"type": "keyword"},
             "chunk_id": {"type": "keyword"},
             "text": {"type": "text"},
+            # Phase-3 metadata filter dimensions. Explicit fields, not a
+            # generic dict — verified empirically against the real running
+            # OpenSearch 2.19.6 that the `flattened` type is unavailable
+            # ("No handler for type [flattened]"), so only these four named
+            # dimensions from the phase task text are mapped, matching the
+            # equivalent explicit-field design in QdrantVectorStore.
+            "language": {"type": "keyword"},
+            "doc_type": {"type": "keyword"},
+            "department": {"type": "keyword"},
+            "date": {"type": "date"},
         }
     }
 }
@@ -55,21 +65,53 @@ class OpenSearchIndex(KeywordIndex):
                     "chunk_id": chunk.id,
                     "acl_principals": chunk.acl_principals,
                     "text": chunk.text,
+                    "language": chunk.language,
+                    "doc_type": chunk.doc_type,
+                    "department": chunk.department,
+                    "date": chunk.date,
                 },
                 params={"refresh": "true"},
             )
 
     def search(
-        self, tenant_id: str, query: str, principals: list[str], top_k: int = 10
+        self,
+        tenant_id: str,
+        query: str,
+        principals: list[str],
+        top_k: int = 10,
+        language: str | None = None,
+        doc_type: str | None = None,
+        department: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> list[KeywordSearchHit]:
+        filters: list[dict[str, object]] = [
+            {"term": {"tenant_id": tenant_id}},
+            {"terms": {"acl_principals": principals}},
+        ]
+        # Same None-means-unconstrained rule as QdrantVectorStore.search —
+        # verified empirically against the real running OpenSearch that a
+        # `date`-typed field range-filters plain ISO date strings correctly
+        # with no special format configuration needed.
+        if language is not None:
+            filters.append({"term": {"language": language}})
+        if doc_type is not None:
+            filters.append({"term": {"doc_type": doc_type}})
+        if department is not None:
+            filters.append({"term": {"department": department}})
+        if date_from is not None or date_to is not None:
+            date_range: dict[str, str] = {}
+            if date_from is not None:
+                date_range["gte"] = date_from
+            if date_to is not None:
+                date_range["lte"] = date_to
+            filters.append({"range": {"date": date_range}})
+
         body = {
             "query": {
                 "bool": {
                     "must": [{"match": {"text": query}}],
-                    "filter": [
-                        {"term": {"tenant_id": tenant_id}},
-                        {"terms": {"acl_principals": principals}},
-                    ],
+                    "filter": filters,
                 }
             },
             "size": top_k,

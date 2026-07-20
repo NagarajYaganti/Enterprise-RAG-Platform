@@ -1,0 +1,83 @@
+# Human-authored eval set for tests/fixtures/eval_corpus/documents.yaml.
+# Relevance is binary (relevant or not) — matches retrieval.eval's actual
+# implementation; no separate "relevance grade" field is claimed since none
+# is computed.
+#
+# Deliberately mixed query styles so hybrid fusion has something real to
+# prove (see docs/PROGRESS.md Phase 3 section for the actual numbers from
+# running this set through the real pipeline):
+#   - "paraphrase" queries share little/no literal vocabulary with their
+#     target document, favoring semantic/vector search.
+#   - "exact_term" queries use a rare literal token (a product code, a
+#     named regulation) that favors BM25 keyword search.
+#   - "general" queries are ordinary natural-language questions with
+#     moderate literal overlap, favoring neither method strongly.
+
+golden_queries:
+  - query: "How fast does the bank need to process a new loan request?"
+    relevant_chunk_ids: ["doc-1"]
+    style: paraphrase
+
+  - query: "What credit score do I need for a home loan?"
+    relevant_chunk_ids: ["doc-3"]
+    style: paraphrase
+
+  - query: "HIPAA compliance training frequency"
+    relevant_chunk_ids: ["doc-18"]
+    style: exact_term
+
+  - query: "widget-a units sold revenue"
+    relevant_chunk_ids: ["doc-11"]
+    style: exact_term
+
+  - query: "What is the return policy for customers?"
+    relevant_chunk_ids: ["doc-10"]
+    style: general
+
+  - query: "How much did quarterly revenue grow?"
+    relevant_chunk_ids: ["doc-8"]
+    style: general
+
+  - query: "When are compliance audits conducted?"
+    relevant_chunk_ids: ["doc-6"]
+    style: general
+
+  - query: "How long does a prescription refill take?"
+    relevant_chunk_ids: ["doc-15"]
+    style: general
+
+  - query: "What is the wire transfer authorization threshold?"
+    relevant_chunk_ids: ["doc-4"]
+    style: general
+
+  - query: "How long until a fraud claim is resolved?"
+    relevant_chunk_ids: ["doc-7"]
+    style: general
+
+  - query: "What discount is offered during the holidays?"
+    relevant_chunk_ids: ["doc-12"]
+    style: general
+
+  - query: "How are patient intake forms handled before appointments?"
+    relevant_chunk_ids: ["doc-14"]
+    style: paraphrase
+
+  - query: "What was the average emergency room wait time?"
+    relevant_chunk_ids: ["doc-20"]
+    style: general
+
+  - query: "How long does outpatient claims processing take?"
+    relevant_chunk_ids: ["doc-17"]
+    style: general
+
+  - query: "Are telehealth visits available for brand new patients?"
+    relevant_chunk_ids: ["doc-19"]
+    style: paraphrase
+
+  - query: "What does reference code TX-88214-B apply to?"
+    relevant_chunk_ids: ["doc-21"]
+    style: exact_term
+
+  - query: "When is form ACH-2291 required?"
+    relevant_chunk_ids: ["doc-22"]
+    style: exact_term

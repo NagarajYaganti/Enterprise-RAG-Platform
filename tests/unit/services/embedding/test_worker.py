@@ -161,6 +161,206 @@ def test_process_embedding_job_is_idempotent_across_a_simulated_mid_batch_kill(
     assert final_count == 5  # not 5 + 3 = 8 — the restart didn't duplicate the first 3
 
 
+def test_process_embedding_job_populates_phase3_filter_fields_from_chunk(
+    session: Session,
+    vector_store: QdrantVectorStore,
+    keyword_index: OpenSearchIndex,
+    embedding_provider: SentenceTransformersProvider,
+) -> None:
+    doc_repo = DocumentRepository(session)
+    chunk_repo = ChunkRepository(session)
+    doc_repo.upsert(
+        Document(
+            id="doc-filters",
+            tenant_id="tenant-a",
+            source_uri="s3://bucket/doc-filters",
+            mime_type="text/plain",
+            checksum="abc123",
+            version=1,
+            status="PARSED",
+        )
+    )
+    chunk_repo.bulk_insert(
+        [
+            Chunk(
+                id="doc-filters-chunk-0",
+                tenant_id="tenant-a",
+                document_id="doc-filters",
+                text="loan policy text",
+                position=0,
+                language="en",
+                version=1,
+                doc_type="policy",
+                department="lending",
+                date="2026-01-01",
+            )
+        ]
+    )
+    session.commit()
+
+    process_embedding_job(
+        session,
+        vector_store,
+        keyword_index,
+        embedding_provider,
+        "tenant-a",
+        "doc-filters",
+        MODEL_ID,
+        "1",
+    )
+
+    result = vector_store._client.scroll(
+        vector_store._collection_name,
+        scroll_filter=None,
+        limit=10,
+    )
+    points = [p for p in result[0] if p.payload and p.payload.get("document_id") == "doc-filters"]
+    assert len(points) == 1
+    assert points[0].payload is not None
+    assert points[0].payload["language"] == "en"
+    assert points[0].payload["doc_type"] == "policy"
+    assert points[0].payload["department"] == "lending"
+    assert points[0].payload["date"] == "2026-01-01"
+
+
+def test_process_embedding_job_skips_graphrag_when_not_provided(
+    session: Session,
+    vector_store: QdrantVectorStore,
+    keyword_index: OpenSearchIndex,
+    embedding_provider: SentenceTransformersProvider,
+) -> None:
+    """Default call (no knowledge_graph/entity_extractor args) must not
+    populate the entities/relations tables at all — proven with real,
+    entity-bearing chunk text and a genuine PostgresKnowledgeGraph query
+    afterward, not just by omission of a positive assertion.
+    """
+    from connectors.graph.postgres_knowledge_graph import PostgresKnowledgeGraph
+
+    doc_repo = DocumentRepository(session)
+    chunk_repo = ChunkRepository(session)
+    doc_repo.upsert(
+        Document(
+            id="doc-nograph",
+            tenant_id="tenant-a",
+            source_uri="s3://bucket/doc-nograph",
+            mime_type="text/plain",
+            checksum="abc123",
+            version=1,
+            status="PARSED",
+        )
+    )
+    chunk_repo.bulk_insert(
+        [
+            Chunk(
+                id="doc-nograph-chunk-0",
+                tenant_id="tenant-a",
+                document_id="doc-nograph",
+                text="Acme Bank owns Acme Lending Corp.",
+                position=0,
+                language="en",
+                version=1,
+            )
+        ]
+    )
+    session.commit()
+
+    count = process_embedding_job(
+        session,
+        vector_store,
+        keyword_index,
+        embedding_provider,
+        "tenant-a",
+        "doc-nograph",
+        MODEL_ID,
+        "1",
+    )
+    assert count == 1
+
+    entities, relations = PostgresKnowledgeGraph(session).query_subgraph(
+        "tenant-a", ["Acme Bank", "Acme Lending Corp"]
+    )
+    assert entities == []
+    assert relations == []
+
+
+def test_process_embedding_job_extracts_entities_and_relations_when_graphrag_enabled(
+    session: Session,
+    vector_store: QdrantVectorStore,
+    keyword_index: OpenSearchIndex,
+    embedding_provider: SentenceTransformersProvider,
+) -> None:
+    from connectors.graph.postgres_knowledge_graph import PostgresKnowledgeGraph
+    from connectors.graph.spacy_extractor import SpacyEntityExtractor
+
+    doc_repo = DocumentRepository(session)
+    chunk_repo = ChunkRepository(session)
+    doc_repo.upsert(
+        Document(
+            id="doc-graph",
+            tenant_id="tenant-a",
+            source_uri="s3://bucket/doc-graph",
+            mime_type="text/plain",
+            checksum="abc123",
+            version=1,
+            status="PARSED",
+        )
+    )
+    chunk_repo.bulk_insert(
+        [
+            Chunk(
+                id="doc-graph-chunk-0",
+                tenant_id="tenant-a",
+                document_id="doc-graph",
+                text="Acme Bank owns Acme Lending Corp.",
+                position=0,
+                language="en",
+                version=1,
+            )
+        ]
+    )
+    session.commit()
+
+    knowledge_graph = PostgresKnowledgeGraph(session)
+    entity_extractor = SpacyEntityExtractor("en_core_web_sm")
+
+    process_embedding_job(
+        session,
+        vector_store,
+        keyword_index,
+        embedding_provider,
+        "tenant-a",
+        "doc-graph",
+        MODEL_ID,
+        "1",
+        knowledge_graph=knowledge_graph,
+        entity_extractor=entity_extractor,
+    )
+    session.commit()
+
+    # spaCy includes the trailing period in "Acme Lending Corp." here since
+    # it's the final token before end-of-sentence — verified empirically,
+    # not assumed; the query name must match exactly.
+    entities, relations = knowledge_graph.query_subgraph(
+        "tenant-a", ["Acme Bank", "Acme Lending Corp."]
+    )
+    assert {e.name for e in entities} == {"Acme Bank", "Acme Lending Corp."}
+    assert len(relations) == 1
+
+
+def test_graphrag_settings_defaults_to_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from embedding.worker import GraphRAGSettings
+
+    monkeypatch.delenv("GRAPHRAG_ENABLED", raising=False)
+    assert GraphRAGSettings().graphrag_enabled is False
+
+
+def test_graphrag_settings_reads_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    from embedding.worker import GraphRAGSettings
+
+    monkeypatch.setenv("GRAPHRAG_ENABLED", "true")
+    assert GraphRAGSettings().graphrag_enabled is True
+
+
 def _count_vectors_for_document(store: QdrantVectorStore, tenant_id: str, document_id: str) -> int:
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 

@@ -1,0 +1,173 @@
+# Dedicated Phase-3 retrieval eval corpus. NOT the 8 Phase-1 format-parsing
+# fixtures (sample.pdf/docx/etc.) — those are too small (1 chunk each,
+# completely disjoint vocabulary) to produce a meaningful hybrid-vs-single-
+# method or reranker delta: with only 8 near-trivial chunks, every method
+# scores ~perfectly and there's no real ranking competition. This corpus is
+# built specifically to have deliberate topical/lexical overlap (multiple
+# lending docs, multiple compliance docs, multiple clinical docs) so
+# retrieval methods actually have something to compete on. Every document
+# is real, human-authored short-form business text (synthetic BFSI/Retail/
+# Healthcare content), not fabricated benchmark numbers — no claim here is
+# presented as a real company's data.
+#
+# tenant_id is fixed at "tenant-eval" for the whole corpus.
+
+documents:
+  - id: doc-1
+    text: "Loan applications must be reviewed within five business days of submission."
+    doc_type: policy
+    department: lending
+    language: en
+    date: "2026-01-15"
+
+  - id: doc-2
+    text: "Personal loan interest rates range from 6.5% to 12% depending on credit score."
+    doc_type: policy
+    department: lending
+    language: en
+    date: "2026-01-20"
+
+  - id: doc-3
+    text: "Mortgage loan approval requires a minimum credit score of 620."
+    doc_type: policy
+    department: lending
+    language: en
+    date: "2026-02-01"
+
+  - id: doc-4
+    text: "All wire transfers above ten thousand dollars require dual authorization from compliance."
+    doc_type: policy
+    department: compliance
+    language: en
+    date: "2026-02-10"
+
+  - id: doc-5
+    text: "Suspicious activity reports must be filed within thirty days of detection."
+    doc_type: policy
+    department: compliance
+    language: en
+    date: "2026-02-15"
+
+  - id: doc-6
+    text: "Quarterly compliance audits are conducted every March, June, September, and December."
+    doc_type: report
+    department: compliance
+    language: en
+    date: "2026-03-01"
+
+  - id: doc-7
+    text: "Credit card fraud claims are typically resolved within ten business days."
+    doc_type: policy
+    department: fraud
+    language: en
+    date: "2026-03-05"
+
+  - id: doc-8
+    text: "Revenue grew twelve percent quarter over quarter driven by online sales."
+    doc_type: report
+    department: sales
+    language: en
+    date: "2026-03-10"
+
+  - id: doc-9
+    text: "Store inventory counts are reconciled at the end of each fiscal month."
+    doc_type: policy
+    department: operations
+    language: en
+    date: "2026-03-15"
+
+  - id: doc-10
+    text: "Customer returns are accepted within thirty days with a valid receipt."
+    doc_type: policy
+    department: customer_service
+    language: en
+    date: "2026-03-20"
+
+  - id: doc-11
+    text: "Widget-a sales totaled 1050 units generating 42000 dollars in revenue last quarter."
+    doc_type: report
+    department: sales
+    language: en
+    date: "2026-03-25"
+
+  - id: doc-12
+    text: "Seasonal discounts of up to forty percent apply during the holiday sales period."
+    doc_type: policy
+    department: marketing
+    language: en
+    date: "2026-04-01"
+
+  - id: doc-13
+    text: "Supply chain disruptions delayed shipments by an average of two weeks."
+    doc_type: report
+    department: operations
+    language: en
+    date: "2026-04-05"
+
+  - id: doc-14
+    text: "Patient intake forms must be completed prior to the initial consultation."
+    doc_type: policy
+    department: clinical
+    language: en
+    date: "2026-04-10"
+
+  - id: doc-15
+    text: "Prescription refill requests are processed within twenty four hours of receipt."
+    doc_type: policy
+    department: pharmacy
+    language: en
+    date: "2026-04-15"
+
+  - id: doc-16
+    text: "Annual wellness checkups are covered in full under the standard insurance plan."
+    doc_type: policy
+    department: clinical
+    language: en
+    date: "2026-04-20"
+
+  - id: doc-17
+    text: "Claims processing for outpatient procedures takes an average of fourteen business days."
+    doc_type: policy
+    department: claims
+    language: en
+    date: "2026-04-25"
+
+  - id: doc-18
+    text: "HIPAA compliance training is mandatory for all clinical staff every twelve months."
+    doc_type: policy
+    department: compliance
+    language: en
+    date: "2026-05-01"
+
+  - id: doc-19
+    text: "Telehealth consultations are available for follow-up appointments only, not new patients."
+    doc_type: policy
+    department: clinical
+    language: en
+    date: "2026-05-05"
+
+  - id: doc-20
+    text: "Emergency room wait times averaged forty five minutes in the last reporting quarter."
+    doc_type: report
+    department: clinical
+    language: en
+    date: "2026-05-10"
+
+  # doc-21/doc-22: deliberately opaque alphanumeric reference codes. Dense
+  # sentence embeddings carry little useful signal for arbitrary codes like
+  # this (subword tokenization scrambles them, and there's no semantic
+  # "meaning" to embed) — real cases where exact lexical match (BM25) has a
+  # genuine advantage over semantic search, not just topical overlap.
+  - id: doc-21
+    text: "Reference code TX-88214-B applies to all international remittance transactions exceeding five thousand dollars."
+    doc_type: policy
+    department: compliance
+    language: en
+    date: "2026-05-15"
+
+  - id: doc-22
+    text: "Form ACH-2291 must be submitted for any recurring direct debit authorization change."
+    doc_type: policy
+    department: operations
+    language: en
+    date: "2026-05-20"

@@ -55,6 +55,16 @@ class Chunk(BaseModel):
     status: ChunkStatus = "active"
     acl_principals: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Phase-3 addition: same rationale as EmbeddingRecord's matching fields —
+    # promoted out of the free-form metadata dict into explicit, indexed/
+    # filterable fields, mirroring how `language` already lives here
+    # first-class rather than inside metadata. KeywordIndex.upsert receives
+    # Chunk objects directly (not EmbeddingRecord), so these must live here
+    # too, not only on EmbeddingRecord — EmbeddingRecord's copies are
+    # threaded through from these at embed time for Qdrant's payload.
+    doc_type: str | None = None
+    department: str | None = None
+    date: str | None = None
 
 
 class EmbeddingRecord(BaseModel):
@@ -67,6 +77,16 @@ class EmbeddingRecord(BaseModel):
     model_version: str
     status: EmbeddingStatus = "active"
     acl_principals: list[str] = Field(default_factory=list)
+    # Phase-3 addition: promoted out of Chunk.metadata into explicit,
+    # indexed/filterable fields on the record itself (see VectorStore/
+    # KeywordIndex search filter kwargs) — OpenSearch has no generic
+    # free-form-dict field type available on the running cluster (verified:
+    # `flattened` type unsupported), so only these four named dimensions
+    # from the phase task text are promoted, not the whole metadata dict.
+    language: str = ""
+    doc_type: str | None = None
+    department: str | None = None
+    date: str | None = None
 
 
 class VectorSearchHit(BaseModel):
@@ -94,6 +114,70 @@ class Query(BaseModel):
     session_id: str
     text: str
     filters: dict[str, Any] = Field(default_factory=dict)
+    # Phase-3 addition: ChatSession is keyed by tenant + user + session (per
+    # Section 4 Phase 3 task text), so Query needs a user identity alongside
+    # the session it belongs to.
+    user_id: str = ""
+
+
+class RetrievalFilters(BaseModel):
+    """Phase-3 addition: the four metadata filter dimensions named in the
+    task text (date, doc type, department, language). A field left as None
+    means "unconstrained" — it is never translated into a filter condition
+    by the adapters. A provided value means an exact-match filter, which
+    excludes any chunk missing that field.
+    """
+
+    language: str | None = None
+    doc_type: str | None = None
+    department: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+
+
+class ChatTurn(BaseModel):
+    """Phase-3 addition: one turn in a ChatSession, keyed by tenant + user +
+    session (per Section 4 Phase 3 task text). Stored as individual rows
+    (not a JSON blob) for queryability/audit, mirroring the Chunk/Document
+    per-row pattern already established.
+    """
+
+    id: str
+    tenant_id: str
+    user_id: str
+    session_id: str
+    role: Literal["user", "assistant"]
+    text: str
+    created_at: datetime
+
+
+class Entity(BaseModel):
+    """Phase-3 addition (GraphRAG, optional/flagged-off): an entity
+    extracted from a chunk. label follows spaCy's NER label scheme (e.g.
+    ORG, PERSON, GPE) — a first-pass extraction, not a curated ontology.
+    """
+
+    id: str
+    tenant_id: str
+    document_id: str
+    chunk_id: str
+    name: str
+    label: str
+
+
+class Relation(BaseModel):
+    """Phase-3 addition (GraphRAG, optional/flagged-off): a coarse relation
+    between two entities co-occurring in the same chunk. predicate is a
+    fixed placeholder ("co_occurs_with"), not real relation classification —
+    see connectors.graph.spacy_extractor for the caveat.
+    """
+
+    id: str
+    tenant_id: str
+    subject_entity_id: str
+    predicate: str
+    object_entity_id: str
+    chunk_id: str
 
 
 class ScoredChunk(BaseModel):

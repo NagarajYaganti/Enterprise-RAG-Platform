@@ -12,6 +12,7 @@ dependencies = [
     "boto3==1.43.51",
     "cohere==7.0.5",
     "core",
+    "en-core-web-sm",
     "extract-msg==0.56.0",
     "faster-whisper==1.2.1",
     "httpx==0.28.1",
@@ -23,6 +24,7 @@ dependencies = [
     "pytesseract==0.3.13",
     "qdrant-client==1.18.0",
     "sentence-transformers==5.6.0",
+    "spacy==3.8.14",
     "sqlalchemy==2.0.51",
     "tenacity==9.1.4",
     "unstructured[docx,pdf,pptx,xlsx]==0.24.1",
@@ -34,3 +36,4 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 core = { workspace = true }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
