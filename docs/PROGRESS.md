@@ -34,6 +34,46 @@ Status: DONE — exit checklist all PASS (2026-07-19).
 - Infra image tags (`postgres`/pgvector, qdrant, opensearch, redis, minio, prometheus, grafana, jaeger) are pinned to specific versions current as of 2026-07-19 — revisit at the start of Phase 7 (IaC) rather than silently drifting to `latest`.
 - **REVISED (Phase 4, 2026-07-21)** — the original claim here ("`starlette`'s `TestClient` now requires `httpx2`, not `httpx`") was overstated, not fully fabricated. Re-verified directly: `starlette==1.3.1`'s `TestClient` module DOES emit a real `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2 instead` at import time (confirmed via a real pytest run showing the warning on both `services/retrieval` and `services/orchestrator`'s `TestClient`-based tests) — so httpx2 is a real, currently-recommended migration target, not an invented package name. What was wrong: (1) "requires" overstated a soft deprecation warning as a hard dependency — `TestClient` still works correctly with plain `httpx`, confirmed by full test suites passing; (2) `starlette==1.3.1`'s own declared dependencies (uv.lock) list only `anyio`/`typing-extensions`, no httpx of any kind, so the warning is a runtime nudge, not a resolvable package dependency; (3) `httpx2==2.7.0` sat in root `pyproject.toml`'s dev group since Phase 0 but was never actually imported anywhere in the codebase, so it did nothing — it has been removed since it wasn't wired to anything. Net effect of removal: zero test failures, one previously-silent deprecation warning now visible in test output. Re-flagging as a watch item: a future Starlette release could turn this into a hard requirement, at which point `httpx2` should be reintroduced as a real, correctly-scoped dependency (e.g. in whichever package's tests actually construct `TestClient`), not parked in the root dev group with an incorrect justification.
 
+### Retrofit (2026-07-21) — Adaptive Policy Pattern scaffolding
+The master spec was updated after Phases 0–4 were built, adding two
+platform-wide, binding principles to `docs/ARCHITECTURE.md`: the **Adaptive
+Policy Pattern** and the **Global-First Principle**. `docs/RETROFIT-AUDIT.md`
+audited the existing code against them and found the Adaptive Policy Pattern
+entirely unimplemented — no `config/policies/` directory, no shared
+mechanism any of the eleven named policies could use. This retrofit builds
+that shared mechanism, scoped to Phase 0 (scaffolding only — no concrete
+named policy is retrofitted here; that's Phase 1–4's own retrofit loops).
+
+**GAP-MATRIX rows mapped to Phase 0:** none — stated explicitly per the
+audit protocol, not silently skipped.
+
+#### Exit checklist results (new items, added because the original Phase 0
+checklist predates the Adaptive Policy Pattern)
+| Item | Result | Evidence |
+|---|---|---|
+| `docker compose up` → all containers healthy | PASS | `docker compose -f infra/docker-compose.dev.yml ps` — 8/8 `healthy` |
+| pytest → interface/model tests pass | PASS | `uv run pytest -q` — 466 passed (449 pre-existing + 17 new) |
+| mypy + ruff clean | PASS | `uv run ruff check .` — all checks passed; `uv run mypy` — 0 issues in 210 files |
+| Policy engine: a profile matching a rule's `when` conditions returns that rule's `then` outcome, with `matched_rule` set | PASS | `tests/unit/libs/core/test_policy_engine.py::test_evaluate_policy_matches_*` (5 tests, one per comparator/combination) |
+| Policy engine: a profile matching no rule falls back to the configured default, `is_fallback=True`, does not raise | PASS | `test_evaluate_policy_falls_back_when_no_rule_matches` |
+| Policy engine: a missing or malformed `config/policies/<name>.yaml` falls back safely, does not raise | PASS | `test_evaluate_policy_falls_back_when_rules_file_is_missing`, `..._on_malformed_yaml_syntax_never_raises`, `..._on_unknown_comparator_never_raises` |
+| Policy engine: every `evaluate_policy()` call emits a structured JSON log line with `policy_name`/`profile`/`matched_rule`/`outcome`/`is_fallback` | PASS | `test_evaluate_policy_logs_a_matched_decision`, `..._logs_a_fallback_decision` |
+| CI workflow runs green on this retrofit's PR | *pending* | to be filled in with the real `gh pr checks` output once the PR opens |
+
+#### Done
+- `libs/core/src/core/models.py`: new `PolicyDecision` model — the fixed output shape every named policy resolves to (`policy_name`, `profile`, `matched_rule`, `outcome`, `is_fallback`).
+- `libs/core/src/core/policy_engine.py` (new): `evaluate_policy()`/`load_policy_rules()` — a function-based module (mirroring `model_registry.py`'s existing idiom, not a new ABC — a policy is pure computation, not a stateful adapter like the 8 core ABCs). 8 comparators (`eq`/`ne`/`in`/`not_in`/`gte`/`lte`/`gt`/`lt`), AND-within-rule, first-match-wins, never raises (a missing file, malformed YAML, or an unknown comparator all safely resolve to the caller's `fallback`). Every call logs a structured `policy_engine.decision` line.
+- `config/policies/README.md`: documents the YAML schema, comparator set, and — explicitly, since it's a real subtlety and not a bug — that `ne`/`not_in` vacuously pass when a signal is absent from the profile.
+- No concrete named policy (`ParserPolicy`, `ChunkingPolicy`, etc.) was retrofitted in this pass — by design; each lands in its own phase's retrofit loop against this shared mechanism.
+
+#### Stubbed / deferred (intentionally)
+- The comparator set is deliberately minimal (covers every signal named across Section 4's policy descriptions, not a speculative general-purpose rule language). If a later phase's retrofit needs more (e.g. cross-rule OR), extend then — not built speculatively now.
+- No decision-history store (e.g. a Postgres table) — decisions are structured log lines only, consistent with this project's existing observability approach (no other config-driven registry in this codebase has its own decision-history table either). If Phase 6/7's eval-tuning work needs queryable history later, that's additive on top of this, not a redesign.
+- `config/tenants/` remains empty and `TenantContextMiddleware`'s insecure-auth-stub remains unfixed — both explicitly assigned to Phase 5 in the retrofit audit's backlog, not re-scoped into this Phase 0 retrofit.
+
+#### Known risks / watch items
+- The rule schema/comparator design is a one-time decision every Phase 1–4 policy retrofit will build on. Getting it meaningfully wrong would mean reworking every concrete policy later — mitigated by grounding the comparator set in the actual signals Section 4 names (mime type, heading density, OCR confidence, language, query length, score margin, intent, ...), not a guess.
+
 ### Top 3 priorities for Phase 1
 1. Document parsers as `DocumentParser` adapters (PDF/DOCX/PPTX/XLSX/HTML via `unstructured`, images via Tesseract OCR, audio via faster-whisper) plus the `POST /v1/documents` ingestion endpoint — verify each library's installed API before use, per the anti-hallucination rules.
 2. Source connectors with incremental sync and deletion propagation, plus ACL capture on ingest — GAP-MATRIX flags this as the row teams most often skip and then stall on at enterprise pilots.

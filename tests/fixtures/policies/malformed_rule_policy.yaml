@@ -1,0 +1,11 @@
+policy: malformed_rule
+version: "1"
+rules:
+  - name: uses_an_unknown_comparator
+    when:
+      some_signal: { between: [1, 10] }
+    then:
+      strategy: unreachable
+fallback:
+  strategy: fixed_size
+  chunk_size: 500

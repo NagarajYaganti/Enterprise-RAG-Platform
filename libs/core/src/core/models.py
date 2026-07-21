@@ -279,3 +279,19 @@ class TokenUsageRecord(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     created_at: datetime
+
+
+class PolicyDecision(BaseModel):
+    """Phase-0 retrofit addition: the Adaptive Policy Pattern's fixed output
+    shape (docs/ARCHITECTURE.md) — every one of the eleven named policies
+    (ParserPolicy, ChunkingPolicy, etc., built in their own phases) resolves
+    to one of these via core.policy_engine.evaluate_policy(), so every
+    strategy decision is loggable/auditable in the same shape regardless of
+    which policy produced it.
+    """
+
+    policy_name: str
+    profile: dict[str, Any]
+    matched_rule: str | None = None
+    outcome: dict[str, Any]
+    is_fallback: bool

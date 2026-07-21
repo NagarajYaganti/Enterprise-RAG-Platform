@@ -1,0 +1,12 @@
+policy: no_match
+version: "1"
+rules:
+  - name: never_matches
+    when:
+      signal_that_will_never_be_present: { eq: "impossible_value" }
+    then:
+      strategy: unreachable
+
+fallback:
+  strategy: fixed_size
+  chunk_size: 500

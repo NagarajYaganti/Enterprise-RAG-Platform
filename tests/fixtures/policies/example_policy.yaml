@@ -1,0 +1,40 @@
+policy: example
+version: "1"
+rules:
+  - name: rule_eq_and_gte
+    when:
+      mime_type: { eq: "text/html" }
+      heading_density: { gte: 1.0 }
+    then:
+      strategy: structure_aware
+
+  - name: rule_lt
+    when:
+      ocr_confidence: { lt: 0.6 }
+    then:
+      strategy: fixed_size
+      chunk_size: 500
+
+  - name: rule_in
+    when:
+      language: { in: ["en", "es", "fr"] }
+    then:
+      strategy: multilingual_default
+
+  - name: rule_ne_and_not_in
+    when:
+      mime_type: { ne: "application/zip" }
+      doc_type: { not_in: ["archive", "binary"] }
+    then:
+      strategy: general_default
+
+  - name: rule_lte_and_gt
+    when:
+      doc_length: { gt: 100 }
+      score_margin: { lte: 0.05 }
+    then:
+      strategy: rerank_skip
+
+fallback:
+  strategy: fixed_size
+  chunk_size: 500
