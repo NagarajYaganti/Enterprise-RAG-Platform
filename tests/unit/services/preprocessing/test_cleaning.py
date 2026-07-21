@@ -15,3 +15,11 @@ def test_strips_control_characters() -> None:
 
 def test_strips_leading_and_trailing_whitespace() -> None:
     assert clean_text("   hello   ") == "hello"
+
+
+def test_uses_nfc_not_nfkc_normalization() -> None:
+    # Full-width digits are a real, verified case where NFC and NFKC
+    # disagree: NFKC's compatibility folding rewrites them to ASCII
+    # ("１２３" -> "123"), silently altering the source text. NFC preserves
+    # them, matching the Global-First citation-fidelity requirement.
+    assert clean_text("１２３") == "１２３"

@@ -1,0 +1,28 @@
+policy: chunking
+version: "1"
+rules:
+  - name: structured_high_density
+    when:
+      mime_type: { in: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/html", "application/vnd.openxmlformats-officedocument.presentationml.presentation"] }
+      heading_density: { gte: 1.0 }
+    then:
+      strategy: structure_aware
+  - name: spreadsheet
+    when:
+      mime_type: { eq: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+    then:
+      # Row-group chunking is a distinct future strategy (not yet built);
+      # structure_aware is today's closest real fit, not silently claimed
+      # as row-group chunking.
+      strategy: structure_aware
+  - name: plain_or_low_structure
+    when:
+      heading_density: { lt: 1.0 }
+    then:
+      strategy: fixed_size
+      chunk_size: 500
+      overlap_pct: 0.15
+fallback:
+  strategy: fixed_size
+  chunk_size: 500
+  overlap_pct: 0.15

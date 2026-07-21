@@ -129,6 +129,28 @@ def test_chunk_bulk_insert_round_trips_phase3_filter_fields(session: Session) ->
     assert listed[0].date == "2026-01-01"
 
 
+def test_chunk_bulk_insert_round_trips_original_text(session: Session) -> None:
+    chunk_repo = ChunkRepository(session)
+    translated_chunk = Chunk(
+        id="chunk-translated-1",
+        tenant_id="tenant-a",
+        document_id="doc-1",
+        text="This is the translated text.",
+        position=0,
+        language="en",
+        version=1,
+        original_text="Este es el texto original.",
+    )
+    untranslated_chunk = _make_chunk("tenant-a", "doc-1", "chunk-untranslated-1")
+
+    chunk_repo.bulk_insert([translated_chunk, untranslated_chunk])
+    session.commit()
+
+    listed = {c.id: c for c in chunk_repo.list_for_document("tenant-a", "doc-1")}
+    assert listed["chunk-translated-1"].original_text == "Este es el texto original."
+    assert listed["chunk-untranslated-1"].original_text is None
+
+
 def test_chunk_bulk_insert_and_list_for_document(session: Session) -> None:
     chunk_repo = ChunkRepository(session)
     chunks = [_make_chunk("tenant-a", "doc-1", f"chunk-{i}") for i in range(3)]

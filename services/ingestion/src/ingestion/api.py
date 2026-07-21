@@ -3,21 +3,40 @@ import uuid
 from collections.abc import Generator
 from datetime import datetime, timezone
 
+from connectors.keyword.opensearch_index import OpenSearchIndex, ensure_index
+from connectors.parser_registry import ParserRegistry
 from connectors.postgres.repository import DocumentRepository
 from connectors.postgres.session import get_engine, get_sessionmaker
+from connectors.sources.blob_connector import BlobSourceConnector
+from connectors.vectorstores.migrations import ensure_qdrant_collection
+from connectors.vectorstores.qdrant_store import QdrantVectorStore
+from core.model_registry import get_default_embedding_model
 from core.models import Document
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from opensearchpy import OpenSearch
+from preprocessing.language_detect import LanguageDetector
+from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
 from ingestion.queue import enqueue_parse_job
 from ingestion.storage import StorageSettings, get_s3_client, upload_fileobj
+from ingestion.sync import SyncResult, run_sync
+
+# Same collection/index names as services/embedding and services/retrieval
+# -- sync-deleted chunks/vectors must be removed from the same real store
+# retrieval/embedding read from, not a separate copy.
+CHUNKS_COLLECTION_NAME = "chunks"
+CHUNKS_INDEX_NAME = "chunks"
 
 router = APIRouter(prefix="/v1/documents")
+sync_router = APIRouter(prefix="/v1/sync")
 
 _engine = get_engine()
 _session_factory = get_sessionmaker(_engine)
 _storage_settings = StorageSettings()
 _s3_client = get_s3_client(_storage_settings)
+_parser_registry = ParserRegistry(stt_model_size="tiny")
+_language_detector = LanguageDetector()
 
 
 def get_db_session() -> Generator[Session, None, None]:
@@ -100,4 +119,65 @@ def get_document_status(
         "status": document.status,
         "version": str(document.version),
         "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@sync_router.post("/{connector_name}")
+def sync_endpoint(
+    connector_name: str,
+    request: Request,
+    session: Session = Depends(get_db_session),
+) -> dict[str, int | str]:
+    """Drives a SourceConnector's real incremental-sync + deletion-
+    propagation methods end-to-end (ingestion.sync.run_sync) --
+    SharePointConnector/BlobSourceConnector were built and unit-tested in
+    isolation but never called from anywhere in services/ before this
+    (docs/RETROFIT-AUDIT.md's Phase 1 finding).
+
+    Only "blob" is wired to an endpoint in this retrofit: SharePoint needs
+    real Microsoft Graph credentials/site config this environment doesn't
+    have, and inventing plausible-looking config keys for it would violate
+    the anti-hallucination rule against guessed configuration surface.
+    SharePointConnector itself is unaffected -- it's still fully usable via
+    ingestion.sync.run_sync directly once real credentials exist.
+    """
+    tenant_id = _require_tenant_id(request)
+    if connector_name != "blob":
+        raise HTTPException(status_code=404, detail=f"unknown connector: {connector_name!r}")
+
+    document_repo = DocumentRepository(session)
+
+    def known_keys() -> set[str]:
+        return {doc.id for doc in document_repo.list_for_tenant(tenant_id)}
+
+    connector = BlobSourceConnector(
+        _s3_client,
+        _storage_settings.s3_bucket,
+        tenant_id,
+        _parser_registry,
+        known_keys_provider=known_keys,
+        prefix=f"{tenant_id}/",
+    )
+
+    embedding_model = get_default_embedding_model()
+    qdrant_client = QdrantClient(url="http://localhost:6333")
+    ensure_qdrant_collection(
+        qdrant_client, CHUNKS_COLLECTION_NAME, dimension=embedding_model["dimensions"]
+    )
+    vector_store = QdrantVectorStore(qdrant_client, CHUNKS_COLLECTION_NAME)
+
+    opensearch_client = OpenSearch(
+        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
+    )
+    ensure_index(opensearch_client, CHUNKS_INDEX_NAME)
+    keyword_index = OpenSearchIndex(opensearch_client, CHUNKS_INDEX_NAME)
+
+    result: SyncResult = run_sync(
+        session, connector, _language_detector, vector_store, keyword_index, tenant_id
+    )
+
+    return {
+        "tenant_id": result.tenant_id,
+        "documents_processed": result.documents_processed,
+        "documents_deleted": result.documents_deleted,
     }
