@@ -100,10 +100,10 @@ def opensearch_client() -> Generator[OpenSearch, None, None]:
     client = OpenSearch(
         hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
     )
-    client.indices.delete(index=OPENSEARCH_INDEX, ignore=[404])
+    client.indices.delete(index=f"{OPENSEARCH_INDEX}_*", ignore=[404])
     ensure_index(client, OPENSEARCH_INDEX)
     yield client
-    client.indices.delete(index=OPENSEARCH_INDEX, ignore=[404])
+    client.indices.delete(index=f"{OPENSEARCH_INDEX}_*", ignore=[404])
 
 
 def test_erase_document_removes_data_from_all_three_real_stores(
@@ -166,7 +166,7 @@ def test_erase_document_removes_data_from_all_three_real_stores(
     )
     assert len(pre_vector_hits.points) == 1
     pre_keyword_hits = opensearch_client.search(
-        index=OPENSEARCH_INDEX, body={"query": {"match_all": {}}}
+        index=f"{OPENSEARCH_INDEX}_*", body={"query": {"match_all": {}}}
     )
     assert len(pre_keyword_hits["hits"]["hits"]) == 1
 
@@ -196,6 +196,6 @@ def test_erase_document_removes_data_from_all_three_real_stores(
     assert vector_hits.points == []
 
     keyword_hits = opensearch_client.search(
-        index=OPENSEARCH_INDEX, body={"query": {"match_all": {}}}
+        index=f"{OPENSEARCH_INDEX}_*", body={"query": {"match_all": {}}}
     )
     assert keyword_hits["hits"]["hits"] == []

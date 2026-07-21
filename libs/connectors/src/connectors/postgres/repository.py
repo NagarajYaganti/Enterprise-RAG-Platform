@@ -61,6 +61,7 @@ def _chunk_to_model(row: ChunkORM) -> Chunk:
         department=row.department,
         date=row.date,
         original_text=row.original_text,
+        search_analyzer=row.search_analyzer,
     )
 
 
@@ -140,6 +141,7 @@ class ChunkRepository:
                 department=chunk.department,
                 date=chunk.date,
                 original_text=chunk.original_text,
+                search_analyzer=chunk.search_analyzer,
             )
             self._session.add(row)
         self._session.flush()

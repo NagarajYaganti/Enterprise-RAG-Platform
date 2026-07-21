@@ -243,6 +243,59 @@ Re-running the checklist after rebuilding `.venv` from scratch (to match CI's ex
 - `config/models.yaml`'s OpenAI/Cohere `cost_per_1k_tokens` values are `null`/ASSUMPTION, not confirmed against current provider pricing pages — must be verified before any real deploy that uses cost-based routing.
 - All 3 embedding model entries remain `verified_before_deploy: false`; a human must confirm each against provider docs before production use, per the anti-hallucination rule.
 
+### Retrofit (2026-07-21) — EmbeddingPolicy, erasure wiring, language-aware keyword search
+`docs/RETROFIT-AUDIT.md` found 3 gaps in Phase 2 against the updated spec:
+no `EmbeddingPolicy` (one embedding model used uniformly for every chunk,
+no config-driven per-chunk routing), hard-delete was only a "foundation"
+(`ErasureService` existed as a well-designed hook registry but was never
+instantiated anywhere, and `services/ingestion` had no DELETE endpoint at
+all), and the OpenSearch keyword index had no language-aware analyzers
+(every chunk in every language got the default English-oriented "standard"
+analyzer — the exact failure mode docs/ARCHITECTURE.md's Global-First
+principle names: "a default English analyzer on non-English text silently
+ruins keyword recall"). This retrofit closes all 3, built on Phase 0's
+`core.policy_engine` and Phase 1's already-built `LanguagePolicy`.
+
+**User-confirmed scope decision (EmbeddingPolicy)**: build the real,
+config-driven, logged routing mechanism and wire it into the embedding
+worker so multi-collection routing genuinely works end-to-end, but do NOT
+extend `services/retrieval`/`services/orchestrator` to search multiple
+collections in this pass — those keep reading only the default "chunks"
+collection until their own retrofit loops (Phase 3, Phase 4) wire in
+multi-collection search. Proven safe because the rule set stays
+conservative: every real chunk type in production today (prose documents)
+still resolves to today's exact default collection; only a synthetic
+alternate-routing test case (spreadsheet content) proves the mechanism.
+
+#### Exit checklist results (new items, since the original Phase 2 checklist predates these requirements)
+| Item | Result | Evidence |
+|---|---|---|
+| A spreadsheet document's chunks route to a real, separate Qdrant collection + OpenSearch index (`chunks_tables_*`) via EmbeddingPolicy; an ordinary document still uses today's default | PASS | `test_spreadsheet_document_routes_via_embedding_policy_to_a_separate_real_collection`, `test_prose_document_still_uses_the_bound_default_store` |
+| EmbeddingPolicy: rule + fallback tested, decision logged | PASS | `tests/unit/services/embedding/test_embedding_policy.py` (3 tests) |
+| Real Arabic/Chinese/Hindi fixtures: a BM25 keyword search for a real word from the document, filtered by that language, finds it | PASS | `tests/integration/test_multilingual_ingestion.py`'s 3 new keyword-search cases (real tokens confirmed via the running cluster's own `_analyze` API: Arabic "قروض", Chinese "贷款", Hindi "ऋण") |
+| A mixed-language document's chunks land in two different real OpenSearch language indices; `delete()` cleans up both | PASS | `tests/unit/libs/connectors/keyword/test_opensearch_index.py`'s multi-index upsert/search/delete tests |
+| `DELETE /v1/documents/{id}` removes the document row, chunks, vectors, keyword-index entries, AND semantic-cache entries citing it, in one real end-to-end test; a 404 case; a tenant-isolation case | PASS | `tests/unit/services/ingestion/test_api.py`'s 3 new delete tests |
+| `ingestion.sync.run_sync`'s deletion path still passes after the `ErasureService`-based refactor | PASS | `tests/unit/services/ingestion/test_sync.py` (3/3 unchanged) |
+| `ruff check .` | PASS | `All checks passed!` |
+| `mypy .` | PASS | `Success: no issues found in 226 source files` |
+| Full `pytest -q` | PASS | `531 passed, 35 warnings in 326.23s` |
+
+#### Done
+1. **Language-aware OpenSearch analyzers**: `config/policies/language.yaml` expanded from 1 rule to 18 (native/non-native variant per language, preserving the existing `native_languages`-override test) plus a fallback, each now also declaring an `analyzer` field — real, built-in Lucene analyzers (`english`/`spanish`/`french`/`german`/`portuguese`/`hindi`/`arabic`/`cjk`), verified empirically via the running OpenSearch 2.19.6's own `_analyze` API (no `analysis-icu` plugin installed, but these ship in core with zero extra plugins). `Chunk.search_analyzer` (new field) is resolved per chunk from its OWN `language` in `pipeline.run_pipeline`, so a mixed-language document's per-section chunks each route correctly. `OpenSearchIndex`/`ensure_index` rewritten: one real index per analyzer (`chunks_english`, `chunks_arabic`, ... `chunks_standard`); `ensure_index`/`OpenSearchIndex.__init__` keep their exact call signatures, so all 4 existing call sites (ingestion, embedding, retrieval, orchestrator) needed zero code changes. `search()` with an explicit `language` filter targets one index; unconstrained search spans the wildcard `chunks_*`. `delete()` always targets the wildcard, since one document's chunks can span multiple language indices.
+2. **Erasure wiring**: new `DELETE /v1/documents/{document_id}` in `services/ingestion/src/ingestion/api.py`, constructing a real `ErasureService` (already built, previously never instantiated) and registering chunk/vector/keyword-index/document hard-delete plus `SemanticCache.invalidate_for_document` (real, built in Phase 4, previously never called from anywhere) — closing that half of Phase 4's cache-invalidation-on-delete gap too. `services/ingestion/pyproject.toml` gained an explicit `orchestrator` workspace dependency (formalizing this new real, direct cross-service import — the same precedent as `ingestion` already importing `preprocessing`). `ingestion.sync.run_sync()`'s manual 4-step deletion sequence refactored to use the same `ErasureService`, avoiding two independently-maintained copies (behavior-identical, proven by the existing sync tests passing unchanged).
+3. **`EmbeddingPolicy`**: new `services/embedding/src/embedding/embedding_policy.py` + `config/policies/embedding.yaml` — profile is `mime_type`/`content_type` (table vs. prose, derived from mime_type)/`language`; `domain` (the spec's third named signal) is honestly omitted since no real signal exists anywhere in the data model yet, mirroring Phase 1's `has_table`/`is_ocr` precedent. `services/embedding/src/embedding/worker.py`'s `process_embedding_job` now resolves each chunk's target `(collection_name, index_name)` independently via `decide_embedding_route`, falling back to the worker's bound default model/collection/index if the policy ever routes to a model this worker process isn't configured to serve (mirroring Phase 1's ParserPolicy/ParserRegistry defensive-backstop pattern) — never crashing the job over a strategy choice.
+
+#### Stubbed / deferred (intentionally)
+- `services/retrieval`/`services/orchestrator` still only search the default `"chunks"` Qdrant collection — a chunk routed to `chunks_tables` is embedded and stored correctly but not yet reachable via retrieval until those services' own retrofit loops (Phase 3, Phase 4) wire in multi-collection search. Stated explicitly, not silently incomplete.
+- EmbeddingPolicy's one real routing rule (spreadsheet → `chunks_tables`) uses the SAME default local model as the fallback — proving real multi-collection *mechanics*, not real cross-model consistency, since OpenAI/Cohere require API keys not present in this environment (an already-established precedent from Phases 2-4).
+- A pre-existing single `"chunks"` OpenSearch index in a long-lived dev volume is left as-is, not migrated/backfilled to the new per-language indices — same accepted limitation as Phase 3's Postgres schema-drift note; a fresh dev/CI volume gets the new indices from scratch.
+- `zh`/`ja` both map to the `cjk` analyzer (bigram tokenization) since no `kuromoji` plugin is installed for real Japanese-specific segmentation — a disclosed limitation, not assumed ideal.
+
+#### Known risks / watch items
+- A real mypy gap was caught during this retrofit (not by the user): `ChunkRepository.hard_delete_for_document` returns `int`, incompatible with `ErasureService`'s `CleanupHook = Callable[[str, str], None]` when registered directly — fixed by wrapping in a thin local function with an explicit `-> None` return, both in the new DELETE endpoint and in `run_sync`'s refactor.
+- `config/policies/embedding.yaml`'s one rule is a hand-authored starting point (spreadsheet → separate collection), not tuned against eval-harness evidence — consistent with the Adaptive Policy Pattern's own stated rule, not claimed optimal.
+- The OpenSearch per-language index rewrite touches a class shared identically by 4 services (ingestion, embedding, retrieval, orchestrator) — verified each call site needs zero changes since `ensure_index`/`OpenSearchIndex`'s signatures didn't change, only their internal behavior.
+
 ### Top 3 priorities for Phase 3
 1. Hybrid retrieval combining Qdrant vector search and OpenSearch BM25 (reciprocal rank fusion or similar), both already ACL-pre-filtering per this phase's work — Phase 3 wires them together behind one retrieval interface rather than adding new tenant/ACL logic.
 2. Reranker adapter (the 5th of the 8 fixed core ABCs still unimplemented) — cross-encoder or provider-hosted, verified against real installed API before use.

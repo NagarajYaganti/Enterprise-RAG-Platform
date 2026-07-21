@@ -43,6 +43,7 @@ class ChunkORM(Base):
     department: Mapped[str | None] = mapped_column(String, nullable=True)
     date: Mapped[str | None] = mapped_column(String, nullable=True)
     original_text: Mapped[str | None] = mapped_column(String, nullable=True)
+    search_analyzer: Mapped[str] = mapped_column(String, nullable=False, default="standard")
 
 
 class ChatTurnORM(Base):

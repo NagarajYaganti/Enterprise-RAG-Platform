@@ -1,15 +1,160 @@
 policy: language
-version: "1"
+version: "2"
 rules:
-  - name: supported_by_embedding_model
+  # `action` decision is unchanged from version "1": embed_natively when
+  # `supported_natively` is true (detected_language is in the caller's
+  # native_languages -- ("en",) by default, but overridable, e.g. tests
+  # proving a custom native_languages set), translate_then_embed otherwise.
+  # This version adds `analyzer`, the OpenSearch analyzer this language's
+  # chunks should be indexed under (Phase-2 retrofit: docs/ARCHITECTURE.md's
+  # Global-First "a default English analyzer on non-English text silently
+  # ruins keyword recall" -- analyzer choice is part of LanguagePolicy and
+  # logged). Analyzer names are OpenSearch's real, built-in Lucene language
+  # analyzers -- verified empirically via the running cluster's own
+  # _analyze API, not assumed. `zh`/`ja` both map to `cjk` (Chinese/
+  # Japanese/Korean n-gram tokenization): no `kuromoji` plugin is installed
+  # for real Japanese-specific segmentation, a disclosed limitation, not
+  # silently assumed ideal.
+  #
+  # Each language needs two rules (native vs. translate-then-embed variant)
+  # so the analyzer stays per-language-specific in BOTH cases -- a single
+  # rule keyed only on `supported_natively` can't also know which specific
+  # language matched, and a single shared fallback would lose per-language
+  # analyzer precision for the common case (most real documents are
+  # non-English and still need their own dedicated analyzer, not one
+  # generic bucket).
+  - name: english_native
     when:
+      detected_language: { eq: "en" }
       supported_natively: { eq: true }
     then:
       action: embed_natively
+      analyzer: english
+  - name: english_non_native
+    when:
+      detected_language: { eq: "en" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: english
+  - name: spanish_native
+    when:
+      detected_language: { eq: "es" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: spanish
+  - name: spanish_non_native
+    when:
+      detected_language: { eq: "es" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: spanish
+  - name: french_native
+    when:
+      detected_language: { eq: "fr" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: french
+  - name: french_non_native
+    when:
+      detected_language: { eq: "fr" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: french
+  - name: german_native
+    when:
+      detected_language: { eq: "de" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: german
+  - name: german_non_native
+    when:
+      detected_language: { eq: "de" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: german
+  - name: portuguese_native
+    when:
+      detected_language: { eq: "pt" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: portuguese
+  - name: portuguese_non_native
+    when:
+      detected_language: { eq: "pt" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: portuguese
+  - name: hindi_native
+    when:
+      detected_language: { eq: "hi" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: hindi
+  - name: hindi_non_native
+    when:
+      detected_language: { eq: "hi" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: hindi
+  - name: arabic_native
+    when:
+      detected_language: { eq: "ar" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: arabic
+  - name: arabic_non_native
+    when:
+      detected_language: { eq: "ar" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: arabic
+  - name: chinese_native
+    when:
+      detected_language: { eq: "zh" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: cjk
+  - name: chinese_non_native
+    when:
+      detected_language: { eq: "zh" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: cjk
+  - name: japanese_native
+    when:
+      detected_language: { eq: "ja" }
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+      analyzer: cjk
+  - name: japanese_non_native
+    when:
+      detected_language: { eq: "ja" }
+    then:
+      action: translate_then_embed
+      target_language: en
+      analyzer: cjk
 fallback:
-  # The detected language isn't in the embedding model's registered
-  # languages (config/models.yaml) -- translate to a language the model
-  # handles well before embedding, per Section 4 Phase 1's "translate-then-
-  # embed for low-resource languages the embedding model handles poorly."
+  # An undetected/unsupported language (e.g. LanguageDetector's "unknown")
+  # -- translate to a language the model handles well before embedding, per
+  # Section 4 Phase 1's "translate-then-embed for low-resource languages
+  # the embedding model handles poorly," and index under OpenSearch's
+  # generic `standard` analyzer since no dedicated one is known to apply.
   action: translate_then_embed
   target_language: en
+  analyzer: standard

@@ -101,5 +101,14 @@ def run_pipeline(
             # Translator is still a no-op stub; a real, section-aware
             # translator would be the natural place to make this precise).
             chunk.original_text = original_raw_text
+        # Resolved from THIS chunk's own language (not the document-level
+        # `language` above) -- per-section language detection means a
+        # mixed-language document's chunks can each need a different
+        # OpenSearch analyzer (Phase-2 retrofit, docs/ARCHITECTURE.md's
+        # Global-First "analyzer choice is part of LanguagePolicy and
+        # logged").
+        chunk.search_analyzer = decide_language_action(chunk.language).get(
+            "analyzer", "standard"
+        )
 
     return chunks

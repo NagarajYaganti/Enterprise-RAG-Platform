@@ -22,3 +22,35 @@ def test_custom_native_languages_override() -> None:
 def test_missing_policy_file_falls_back_safely(tmp_path: Path) -> None:
     outcome = decide_language_action("ar", directory=str(tmp_path))
     assert outcome == FALLBACK_OUTCOME
+
+
+def test_english_resolves_to_english_analyzer() -> None:
+    assert decide_language_action("en")["analyzer"] == "english"
+
+
+def test_arabic_resolves_to_arabic_analyzer() -> None:
+    outcome = decide_language_action("ar")
+    assert outcome["action"] == "translate_then_embed"
+    assert outcome["analyzer"] == "arabic"
+
+
+def test_chinese_and_japanese_both_resolve_to_cjk_analyzer() -> None:
+    assert decide_language_action("zh")["analyzer"] == "cjk"
+    assert decide_language_action("ja")["analyzer"] == "cjk"
+
+
+def test_hindi_resolves_to_hindi_analyzer() -> None:
+    assert decide_language_action("hi")["analyzer"] == "hindi"
+
+
+def test_custom_native_languages_override_still_gets_its_own_analyzer() -> None:
+    # Proves analyzer selection stays per-language-specific even on the
+    # embed_natively branch, not just the translate_then_embed branch.
+    outcome = decide_language_action("es", native_languages=("es", "en"))
+    assert outcome["action"] == "embed_natively"
+    assert outcome["analyzer"] == "spanish"
+
+
+def test_unknown_language_falls_back_to_standard_analyzer() -> None:
+    outcome = decide_language_action("unknown")
+    assert outcome["analyzer"] == "standard"
