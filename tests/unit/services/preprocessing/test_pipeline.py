@@ -134,3 +134,7 @@ def test_pipeline_detects_language_per_section_not_per_document() -> None:
     assert len(chunks) == 2
     assert chunks[0].language == "en"
     assert chunks[1].language == "ar"
+    # Phase-2 retrofit: each chunk's OpenSearch analyzer must follow its
+    # OWN section's language, not the document's majority language.
+    assert chunks[0].search_analyzer == "english"
+    assert chunks[1].search_analyzer == "arabic"

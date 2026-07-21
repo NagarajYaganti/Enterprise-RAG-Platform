@@ -52,7 +52,7 @@ def clean_embedding_stores() -> None:
     opensearch_client = OpenSearch(
         hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
     )
-    opensearch_client.indices.delete(index=INDEX_NAME, ignore=[404])
+    opensearch_client.indices.delete(index=f"{INDEX_NAME}_*", ignore=[404])
 
 
 async def run_worker_burst() -> tuple[int, int]:

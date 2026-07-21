@@ -3,9 +3,10 @@ import uuid
 from collections.abc import Generator
 from datetime import datetime, timezone
 
+from connectors.erasure import ErasureError, ErasureService
 from connectors.keyword.opensearch_index import OpenSearchIndex, ensure_index
 from connectors.parser_registry import ParserRegistry
-from connectors.postgres.repository import DocumentRepository
+from connectors.postgres.repository import ChunkRepository, DocumentRepository
 from connectors.postgres.session import get_engine, get_sessionmaker
 from connectors.sources.blob_connector import BlobSourceConnector
 from connectors.vectorstores.migrations import ensure_qdrant_collection
@@ -14,6 +15,8 @@ from core.model_registry import get_default_embedding_model
 from core.models import Document
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from opensearchpy import OpenSearch
+from orchestrator.semantic_cache import SemanticCache
+from orchestrator.settings import OrchestratorSettings
 from preprocessing.language_detect import LanguageDetector
 from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
@@ -27,6 +30,9 @@ from ingestion.sync import SyncResult, run_sync
 # retrieval/embedding read from, not a separate copy.
 CHUNKS_COLLECTION_NAME = "chunks"
 CHUNKS_INDEX_NAME = "chunks"
+# Same semantic-cache collection name as services/orchestrator/main.py --
+# erasure must invalidate the same real cache orchestrator reads from.
+CACHE_COLLECTION_NAME = "semantic_cache"
 
 router = APIRouter(prefix="/v1/documents")
 sync_router = APIRouter(prefix="/v1/sync")
@@ -120,6 +126,77 @@ def get_document_status(
         "version": str(document.version),
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: str,
+    request: Request,
+    session: Session = Depends(get_db_session),
+) -> dict[str, list[str]]:
+    """Hard-delete across chunks, vectors, keyword-index entries, AND
+    semantic-cache entries citing this document -- "one API, tested," the
+    GDPR/erasure foundation (docs/RETROFIT-AUDIT.md's Phase 2 finding:
+    ErasureService already existed as a well-designed hook registry but was
+    never instantiated anywhere, and this endpoint didn't exist at all).
+
+    One failing hook doesn't block the others (ErasureService's existing
+    design), but "one API, tested" means real failure visibility, not
+    silent partial success -- any hook failure surfaces as a 500 with the
+    real detail.
+    """
+    tenant_id = _require_tenant_id(request)
+    document_repo = DocumentRepository(session)
+    if document_repo.get(tenant_id, document_id) is None:
+        raise HTTPException(status_code=404, detail="document not found")
+
+    chunk_repo = ChunkRepository(session)
+
+    def delete_chunks(t: str, d: str) -> None:
+        chunk_repo.hard_delete_for_document(t, d)
+        session.commit()
+
+    def delete_document_row(t: str, d: str) -> None:
+        document_repo.hard_delete(t, d)
+        session.commit()
+
+    embedding_model = get_default_embedding_model()
+    qdrant_client = QdrantClient(url="http://localhost:6333")
+    ensure_qdrant_collection(
+        qdrant_client, CHUNKS_COLLECTION_NAME, dimension=embedding_model["dimensions"]
+    )
+    vector_store = QdrantVectorStore(qdrant_client, CHUNKS_COLLECTION_NAME)
+
+    opensearch_client = OpenSearch(
+        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
+    )
+    ensure_index(opensearch_client, CHUNKS_INDEX_NAME)
+    keyword_index = OpenSearchIndex(opensearch_client, CHUNKS_INDEX_NAME)
+
+    orchestrator_settings = OrchestratorSettings()
+    ensure_qdrant_collection(
+        qdrant_client, CACHE_COLLECTION_NAME, dimension=embedding_model["dimensions"]
+    )
+    semantic_cache = SemanticCache(
+        qdrant_client,
+        CACHE_COLLECTION_NAME,
+        orchestrator_settings.cache_similarity_threshold,
+        orchestrator_settings.cache_ttl_seconds,
+    )
+
+    erasure_service = ErasureService()
+    erasure_service.register("chunks", delete_chunks)
+    erasure_service.register("vectors", vector_store.delete)
+    erasure_service.register("keyword_index", keyword_index.delete)
+    erasure_service.register("semantic_cache", semantic_cache.invalidate_for_document)
+    erasure_service.register("document", delete_document_row)
+
+    try:
+        result = erasure_service.erase_document(tenant_id, document_id)
+    except ErasureError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"completed_hooks": result.completed_hooks}
 
 
 @sync_router.post("/{connector_name}")

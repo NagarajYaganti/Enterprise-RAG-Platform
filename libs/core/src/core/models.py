@@ -90,6 +90,14 @@ class Chunk(BaseModel):
     # no translation ever ran for this chunk (the common case today, since
     # translation is still a no-op stub).
     original_text: str | None = None
+    # Phase-2 retrofit addition: the OpenSearch analyzer this chunk's text
+    # should be indexed under, resolved from this chunk's OWN `language`
+    # (not the document's majority language) via LanguagePolicy -- so a
+    # mixed-language document's per-section chunks each route to their own
+    # correct language index. "standard" is the safe default for chunks
+    # created before this field existed or whose language has no dedicated
+    # analyzer.
+    search_analyzer: str = "standard"
 
 
 class EmbeddingRecord(BaseModel):

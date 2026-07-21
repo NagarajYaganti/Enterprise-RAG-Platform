@@ -27,13 +27,15 @@ class ErasureResult:
 
 
 class ErasureService:
-    """Hard-delete orchestrator: chunks, vectors, and keyword-index entries
-    in one API — the erasure/GDPR foundation.
+    """Hard-delete orchestrator: chunks, vectors, keyword-index entries,
+    and semantic-cache entries in one API — the erasure/GDPR foundation.
 
-    Extensible by design (ASSUMPTION, see Plan v2 §5): no cache exists yet
-    in this system, so no cache-cleanup hook is registered today. Adding
-    one later (e.g. Phase 4's semantic cache) is a single register() call,
-    not a redesign of this API.
+    Extensible by design (ASSUMPTION, see Plan v2 §5) — this class itself
+    stays agnostic of which hooks exist; callers register whatever stores
+    apply. `services/ingestion/src/ingestion/api.py`'s `DELETE
+    /v1/documents/{id}` endpoint (Phase-2 retrofit) is the first caller to
+    register a cache hook (`SemanticCache.invalidate_for_document`),
+    proving that was indeed a single `register()` call, not a redesign.
     """
 
     def __init__(self) -> None:
