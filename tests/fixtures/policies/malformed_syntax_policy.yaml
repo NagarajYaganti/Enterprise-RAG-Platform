@@ -1,0 +1,9 @@
+policy: malformed_syntax
+version: "1"
+rules:
+  - name: broken
+    when: [this is not a mapping, it will not parse as expected
+    then:
+      strategy: unreachable
+fallback:
+  strategy: fixed_size

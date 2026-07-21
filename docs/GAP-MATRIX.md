@@ -21,6 +21,11 @@
 | Domain packs as config; honest compliance labeling | 8 | — |
 | Tenant offboarding: export + verified deletion | 8 | Contract requirement nobody builds until asked |
 | Structured-data / text-to-SQL (guarded), multimodal (flagged) | 8 | Scope-creep magnets — keep optional and eval-gated |
+| Adaptive policy pattern on every strategy choice (parser, chunking, embedding, language, query, rerank, cache, context, prompt, guardrails) | 1–4 | Hardcoded strategies hide everywhere; each policy needs signals → config rules → logged decision → fallback → eval-tuned |
+| Global language support: Unicode/RTL/CJK/Indic, token-based chunking, per-language analyzers, translate-then-embed fallback, answer in query language | 1, 2, 4 | English-only assumptions hide in chunk sizing, BM25 analyzers, PII recognizers |
+| Universal format robustness: unknown → plugin registry, corrupt/encrypted/oversized → graceful statuses | 1 | Real corpora are messy; one crash-prone format blocks whole batches |
+| Air-gapped deployment mode with egress-blocked CI proof | 7 | Defense/regulated buyers require it; hidden external calls disqualify you |
+| Jurisdiction compliance profiles (GDPR, HIPAA, DPDP, CCPA, PDPA as config) | 5 | Hardcoding one legal regime blocks every other market |
 
 If your agent's plan for a phase doesn't touch every matrix row mapped to that
 phase, the plan is incomplete — send it back with the row names.

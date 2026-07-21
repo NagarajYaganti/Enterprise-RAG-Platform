@@ -13,6 +13,7 @@ from core.models import (
     GuardrailResult,
     KeywordSearchHit,
     ParsedDocument,
+    PolicyDecision,
     PromptTemplate,
     Query,
     Relation,
@@ -530,3 +531,31 @@ def test_token_usage_record_requires_tenant_id() -> None:
             completion_tokens=50,
             created_at=datetime.now(timezone.utc),
         )  # type: ignore[call-arg]
+
+
+def test_policy_decision_matched_rule_case() -> None:
+    decision = PolicyDecision(
+        policy_name="chunking",
+        profile={"mime_type": "text/html", "heading_density": 1.2},
+        matched_rule="structured_high_density",
+        outcome={"strategy": "structure_aware"},
+        is_fallback=False,
+    )
+    assert decision.matched_rule == "structured_high_density"
+    assert decision.is_fallback is False
+
+
+def test_policy_decision_fallback_case_has_no_matched_rule() -> None:
+    decision = PolicyDecision(
+        policy_name="chunking",
+        profile={"mime_type": "application/unknown"},
+        outcome={"strategy": "fixed_size", "chunk_size": 500},
+        is_fallback=True,
+    )
+    assert decision.matched_rule is None
+    assert decision.is_fallback is True
+
+
+def test_policy_decision_requires_policy_name_and_outcome() -> None:
+    with pytest.raises(ValidationError):
+        PolicyDecision(profile={}, is_fallback=True)  # type: ignore[call-arg]
