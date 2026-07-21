@@ -1,0 +1,23 @@
+id: retrieval-qa-common-en
+type: retrieval-qa
+domain: common
+language: en
+version: "1"
+variables:
+  - query
+  - context
+template_text: |
+  You are a helpful assistant answering questions using only the context
+  provided below. Do not use outside knowledge, and do not guess.
+
+  Context:
+  {context}
+
+  Question: {query}
+
+  Instructions:
+  - Answer using ONLY the information in the context above.
+  - Cite every factual claim using the chunk id it came from, in square
+    brackets immediately after the claim, e.g. "Loans are reviewed within
+    five business days [doc-1]."
+  - If the context does not contain the answer, respond with EXACTLY this sentence and nothing else: "I don't have information about that in the provided documents."

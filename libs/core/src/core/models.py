@@ -197,3 +197,85 @@ class Completion(BaseModel):
     text: str
     usage: dict[str, int] = Field(default_factory=dict)
     citations: list[str] = Field(default_factory=list)
+
+
+# Phase-4 addition: the closed reason_codes vocabulary each Guardrail
+# implementation emits — stated explicitly (Plan v2 §A.8) rather than left
+# as an arbitrary string, so tests can assert on specific codes.
+GuardrailReasonCode = Literal[
+    "PII_DETECTED",
+    "INJECTION_PATTERN_MATCHED",
+    "OUTPUT_POLICY_VIOLATION",
+    "GUARDRAIL_CHECK_FAILED",
+]
+
+
+class GuardrailResult(BaseModel):
+    """Phase-4 addition: the fixed Guardrail.check(payload, policy) -> Any
+    ABC's concrete return shape. passed=False + GUARDRAIL_CHECK_FAILED means
+    the check itself errored — guardrails fail closed (Plan v2 §A.9), never
+    silently pass content through because a check broke.
+    """
+
+    passed: bool
+    policy: str
+    reason_codes: list[GuardrailReasonCode] = Field(default_factory=list)
+    redacted_text: str | None = None
+
+
+class PromptTemplate(BaseModel):
+    """Phase-4 addition: one entry in the config/prompts/ registry — YAML
+    templates, versioned, with a declared variables schema (Section 4 Phase
+    4 task text: "prompt template registry... variables schema").
+    """
+
+    id: str
+    type: Literal["retrieval-qa", "summarization", "reasoning", "structured-output"]
+    domain: str
+    language: str
+    template_text: str
+    variables: list[str] = Field(default_factory=list)
+    version: str
+
+
+class AgentStep(BaseModel):
+    """Phase-4 addition (agent/tools mode, flagged off by default): one step
+    in an agentic tool-use trace. approved_by=None + requires_approval=True
+    is the halt state the human-approval gate produces (Plan v2 §A.10) —
+    the runtime will not execute this step until a separate resume call
+    sets approved_by.
+    """
+
+    id: str
+    tenant_id: str
+    tool_name: str
+    input: dict[str, Any] = Field(default_factory=dict)
+    output: Any | None = None
+    requires_approval: bool = False
+    approved_by: str | None = None
+
+
+class AgentTrace(BaseModel):
+    """Phase-4 addition: full trace of an agentic loop run, per Section 4
+    Phase 4 task text's "full trace logging" requirement.
+    """
+
+    id: str
+    tenant_id: str
+    query_id: str
+    steps: list[AgentStep] = Field(default_factory=list)
+    max_iterations: int
+    completed: bool = False
+
+
+class TokenUsageRecord(BaseModel):
+    """Phase-4 addition: per-tenant token usage, for the exit checklist's
+    "per-tenant token usage recorded in DB" item.
+    """
+
+    id: str
+    tenant_id: str
+    model_id: str
+    prompt_tokens: int
+    completion_tokens: int
+    created_at: datetime

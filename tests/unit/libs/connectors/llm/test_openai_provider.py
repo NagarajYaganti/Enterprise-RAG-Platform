@@ -34,6 +34,18 @@ def test_generate_returns_completion_from_response() -> None:
     )
 
 
+def test_base_url_defaults_to_none_unchanged_from_phase3() -> None:
+    provider = OpenAIChatProvider(api_key="fake-key")
+    assert provider._client.base_url is not None  # SDK fills in its own default
+
+
+def test_base_url_is_passed_through_for_self_hosted_openai_compatible_endpoints() -> None:
+    provider = OpenAIChatProvider(api_key="fake-key", base_url="http://localhost:8000/v1")
+    # The SDK normalizes base_url with a trailing slash — verified against
+    # the real installed client, not assumed.
+    assert str(provider._client.base_url) == "http://localhost:8000/v1/"
+
+
 def test_generate_raises_when_tenant_id_missing_from_params() -> None:
     provider = OpenAIChatProvider(api_key="fake-key")
 

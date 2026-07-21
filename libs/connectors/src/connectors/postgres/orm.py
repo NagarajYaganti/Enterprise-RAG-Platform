@@ -90,3 +90,20 @@ class RelationORM(Base):
     predicate: Mapped[str] = mapped_column(String, nullable=False)
     object_entity_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     chunk_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+
+
+class TokenUsageORM(Base):
+    """Phase-4 addition: per-tenant token usage, for the exit checklist's
+    "per-tenant token usage recorded in DB" item.
+    """
+
+    __tablename__ = "token_usage"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    model_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

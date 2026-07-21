@@ -1,0 +1,13 @@
+id: summarization-common-en
+type: summarization
+domain: common
+language: en
+version: "1"
+variables:
+  - context
+template_text: |
+  Summarize the following context in a few concise sentences, using only
+  the information it contains. Do not add outside knowledge.
+
+  Context:
+  {context}

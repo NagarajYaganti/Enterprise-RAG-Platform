@@ -147,3 +147,19 @@ class KnowledgeGraph(ABC):
     @abstractmethod
     def query_subgraph(self, tenant_id: str, *args: Any, **kwargs: Any) -> Any:
         """Query a subgraph scoped to a tenant, e.g. by entity names."""
+
+
+class Tool(ABC):
+    """Phase-4 addition (per Section 4 Phase 4 task text: "Agent/tools mode
+    ... per-tool permission scoping"). Not one of the original 8 core
+    interfaces — a phase-directed extension, not a redesign of the fixed
+    contract. A tool call always carries the CALLER's principals, never an
+    elevated/super-user set — see orchestrator.agent.tool_runtime.
+    """
+
+    name: str
+    requires_approval: bool = False
+
+    @abstractmethod
+    def run(self, principals: list[str], **kwargs: Any) -> Any:
+        """Execute the tool scoped to the caller's principals."""

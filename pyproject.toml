@@ -10,7 +10,6 @@ dev = [
     "pytest-asyncio==1.4.0",
     "ruff==0.15.22",
     "mypy==2.3.0",
-    "httpx2==2.7.0",
     "types-pyyaml==6.0.12.20260518",
     "types-openpyxl==3.1.5.20260518",
     "types-fpdf2==2.8.4.20260712",
@@ -68,4 +67,5 @@ pythonpath = [
     "services/preprocessing/src",
     "services/embedding/src",
     "services/retrieval/src",
+    "services/orchestrator/src",
 ]

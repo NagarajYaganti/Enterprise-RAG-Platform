@@ -1,0 +1,18 @@
+id: reasoning-common-en
+type: reasoning
+domain: common
+language: en
+version: "1"
+variables:
+  - query
+  - context
+template_text: |
+  Answer the following question step by step, using only the context
+  provided. Show your reasoning, then state your final answer clearly.
+
+  Context:
+  {context}
+
+  Question: {query}
+
+  If the context does not contain enough information to answer, respond with EXACTLY this sentence and nothing else: "I don't have information about that in the provided documents."

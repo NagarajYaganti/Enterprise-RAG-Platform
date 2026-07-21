@@ -1,11 +1,11 @@
 from typing import Any, cast
 
-from core.models import ChatTurn, Chunk, Document
+from core.models import ChatTurn, Chunk, Document, TokenUsageRecord
 from sqlalchemy import delete, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from connectors.postgres.orm import ChatTurnORM, ChunkORM, DocumentORM
+from connectors.postgres.orm import ChatTurnORM, ChunkORM, DocumentORM, TokenUsageORM
 
 
 def _document_to_model(row: DocumentORM) -> Document:
@@ -29,6 +29,17 @@ def _chat_turn_to_model(row: ChatTurnORM) -> ChatTurn:
         session_id=row.session_id,
         role=row.role,  # type: ignore[arg-type]
         text=row.text,
+        created_at=row.created_at,
+    )
+
+
+def _token_usage_to_model(row: TokenUsageORM) -> TokenUsageRecord:
+    return TokenUsageRecord(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        model_id=row.model_id,
+        prompt_tokens=row.prompt_tokens,
+        completion_tokens=row.completion_tokens,
         created_at=row.created_at,
     )
 
@@ -223,3 +234,30 @@ class ChatSessionRepository:
         )
         rows = self._session.execute(stmt).scalars().all()
         return [_chat_turn_to_model(row) for row in rows]
+
+
+class TokenUsageRepository:
+    """Phase-4 addition: per-tenant token usage, tenant_id always a
+    mandatory filter, matching every other repository in this file.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def record(self, usage: TokenUsageRecord) -> TokenUsageRecord:
+        row = TokenUsageORM(
+            id=usage.id,
+            tenant_id=usage.tenant_id,
+            model_id=usage.model_id,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            created_at=usage.created_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _token_usage_to_model(row)
+
+    def list_for_tenant(self, tenant_id: str) -> list[TokenUsageRecord]:
+        stmt = select(TokenUsageORM).where(TokenUsageORM.tenant_id == tenant_id)
+        rows = self._session.execute(stmt).scalars().all()
+        return [_token_usage_to_model(row) for row in rows]

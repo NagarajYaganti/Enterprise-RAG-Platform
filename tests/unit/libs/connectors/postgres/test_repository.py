@@ -7,9 +7,10 @@ from connectors.postgres.repository import (
     ChatSessionRepository,
     ChunkRepository,
     DocumentRepository,
+    TokenUsageRepository,
 )
 from connectors.postgres.session import get_engine, get_sessionmaker
-from core.models import ChatTurn, Chunk, Document
+from core.models import ChatTurn, Chunk, Document, TokenUsageRecord
 from sqlalchemy.orm import Session
 
 DATABASE_URL = "postgresql+psycopg://rag:rag@localhost:5432/rag_platform"
@@ -332,3 +333,55 @@ def test_chat_session_get_history_respects_limit(session: Session) -> None:
 
     history = repo.get_history("tenant-a", "user-1", "session-1", limit=2)
     assert len(history) == 2
+
+
+def _make_usage(
+    tenant_id: str,
+    usage_id: str,
+    model_id: str = "gpt-5.6-luna",
+    prompt: int = 100,
+    completion: int = 50,
+) -> TokenUsageRecord:
+    return TokenUsageRecord(
+        id=usage_id,
+        tenant_id=tenant_id,
+        model_id=model_id,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def test_token_usage_record_and_list_for_tenant(session: Session) -> None:
+    repo = TokenUsageRepository(session)
+    repo.record(_make_usage("tenant-a", "usage-1"))
+    session.commit()
+
+    listed = repo.list_for_tenant("tenant-a")
+    assert len(listed) == 1
+    assert listed[0].model_id == "gpt-5.6-luna"
+    assert listed[0].prompt_tokens == 100
+    assert listed[0].completion_tokens == 50
+
+
+def test_token_usage_list_for_tenant_enforces_tenant_scope(session: Session) -> None:
+    repo = TokenUsageRepository(session)
+    repo.record(_make_usage("tenant-a", "usage-1"))
+    repo.record(_make_usage("tenant-b", "usage-2"))
+    session.commit()
+
+    assert len(repo.list_for_tenant("tenant-a")) == 1
+    assert len(repo.list_for_tenant("tenant-b")) == 1
+    assert repo.list_for_tenant("tenant-c") == []
+
+
+def test_token_usage_accumulates_multiple_records_for_same_tenant(session: Session) -> None:
+    repo = TokenUsageRepository(session)
+    repo.record(_make_usage("tenant-a", "usage-1", prompt=100, completion=50))
+    repo.record(_make_usage("tenant-a", "usage-2", prompt=200, completion=75))
+    session.commit()
+
+    listed = repo.list_for_tenant("tenant-a")
+    assert len(listed) == 2
+    assert sum(r.prompt_tokens for r in listed) == 300
+    assert sum(r.completion_tokens for r in listed) == 125

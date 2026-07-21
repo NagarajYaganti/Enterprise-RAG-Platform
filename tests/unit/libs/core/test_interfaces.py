@@ -12,6 +12,7 @@ from core.interfaces import (
     ModelRouter,
     Reranker,
     SourceConnector,
+    Tool,
     Translator,
     VectorStore,
 )
@@ -30,6 +31,7 @@ ALL_INTERFACES = [
     Translator,
     KeywordIndex,
     KnowledgeGraph,
+    Tool,
 ]
 
 
@@ -154,3 +156,27 @@ def test_minimal_stub_satisfies_knowledge_graph() -> None:
     assert graph.upsert_entities("tenant-acme") == "entities:tenant-acme"
     assert graph.upsert_relations("tenant-acme") == "relations:tenant-acme"
     assert graph.query_subgraph("tenant-acme") == []
+
+
+def test_minimal_stub_satisfies_tool() -> None:
+    class StubSearchTool(Tool):
+        name = "search"
+
+        def run(self, principals: list[str], **kwargs: object) -> list[str]:
+            return list(principals)
+
+    tool = StubSearchTool()
+    assert tool.name == "search"
+    assert tool.requires_approval is False  # default, per the ABC's class attribute
+    assert tool.run(["p1", "p2"]) == ["p1", "p2"]
+
+
+def test_tool_requires_approval_defaults_false_and_can_be_overridden() -> None:
+    class StateChangingTool(Tool):
+        name = "send_email"
+        requires_approval = True
+
+        def run(self, principals: list[str], **kwargs: object) -> str:
+            return "sent"
+
+    assert StateChangingTool().requires_approval is True

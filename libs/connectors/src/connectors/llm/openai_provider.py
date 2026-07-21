@@ -18,10 +18,22 @@ class OpenAIChatProvider(LLMProvider):
     record in this codebase carries tenant_id from day one) — params must
     include "tenant_id" or this raises, rather than silently defaulting to
     an empty string.
+
+    Phase-4 addition: base_url (optional). vLLM and Ollama both expose an
+    OpenAI-compatible /v1/chat/completions route, so the self-hosted/OSS
+    path from Section 4 Phase 4's task text is this same class pointed at a
+    different base_url, not a new adapter — the wire protocol is identical.
+    No local model server is run in this sandbox (real disk-pressure risk,
+    documented in Phase 4's plan) — this is proven via a mocked HTTP
+    response, same as every other provider this session.
     """
 
-    def __init__(self, api_key: str, sdk_max_retries: int = 2) -> None:
-        self._client = openai.OpenAI(api_key=api_key, max_retries=sdk_max_retries)
+    def __init__(
+        self, api_key: str, sdk_max_retries: int = 2, base_url: str | None = None
+    ) -> None:
+        self._client = openai.OpenAI(
+            api_key=api_key, max_retries=sdk_max_retries, base_url=base_url
+        )
 
     @retry(
         retry=retry_if_exception_type(openai.RateLimitError),
