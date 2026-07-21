@@ -20,6 +20,7 @@ class DocumentORM(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     acl_principals: Mapped[list[str]] = mapped_column(JSON, default=list)
+    failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -41,6 +42,7 @@ class ChunkORM(Base):
     doc_type: Mapped[str | None] = mapped_column(String, nullable=True)
     department: Mapped[str | None] = mapped_column(String, nullable=True)
     date: Mapped[str | None] = mapped_column(String, nullable=True)
+    original_text: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ChatTurnORM(Base):

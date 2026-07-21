@@ -2,6 +2,7 @@ import pytest
 from connectors.parser_registry import ParserRegistry, UnsupportedMimeTypeError
 from connectors.parsers.email_parser import EmailParser
 from connectors.parsers.ocr_tesseract import TesseractOCRParser
+from connectors.parsers.plain_text_parser import PlainTextParser
 from connectors.parsers.unstructured_parser import UnstructuredParser
 
 
@@ -12,6 +13,11 @@ def test_routes_known_mime_types_to_expected_parser() -> None:
     assert isinstance(registry.for_mime_type("text/html"), UnstructuredParser)
     assert isinstance(registry.for_mime_type("image/png"), TesseractOCRParser)
     assert isinstance(registry.for_mime_type("message/rfc822"), EmailParser)
+    assert isinstance(registry.for_mime_type("text/plain"), PlainTextParser)
+    assert isinstance(registry.for_mime_type("text/markdown"), PlainTextParser)
+    assert isinstance(registry.for_mime_type("text/csv"), PlainTextParser)
+    assert isinstance(registry.for_mime_type("application/json"), PlainTextParser)
+    assert isinstance(registry.for_mime_type("application/xml"), PlainTextParser)
 
 
 def test_raises_on_unsupported_mime_type() -> None:

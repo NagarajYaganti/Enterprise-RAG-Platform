@@ -1,0 +1,47 @@
+policy: parser
+version: "1"
+rules:
+  - name: unstructured_documents
+    when:
+      mime_type:
+        in:
+          [
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "text/html",
+          ]
+    then:
+      route: unstructured
+  - name: images_via_ocr
+    when:
+      mime_type: { in: ["image/png", "image/jpeg", "image/tiff"] }
+    then:
+      route: ocr
+  - name: audio_via_stt
+    when:
+      mime_type: { in: ["audio/wav", "audio/x-wav", "audio/mpeg"] }
+    then:
+      route: stt
+  - name: email
+    when:
+      mime_type: { eq: "message/rfc822" }
+    then:
+      route: email
+  - name: plain_text_formats
+    when:
+      mime_type:
+        in:
+          [
+            "text/plain",
+            "text/markdown",
+            "text/csv",
+            "application/json",
+            "application/xml",
+            "text/xml",
+          ]
+    then:
+      route: plain_text
+fallback:
+  route: unsupported

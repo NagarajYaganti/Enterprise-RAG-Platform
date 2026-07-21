@@ -1,0 +1,15 @@
+policy: language
+version: "1"
+rules:
+  - name: supported_by_embedding_model
+    when:
+      supported_natively: { eq: true }
+    then:
+      action: embed_natively
+fallback:
+  # The detected language isn't in the embedding model's registered
+  # languages (config/models.yaml) -- translate to a language the model
+  # handles well before embedding, per Section 4 Phase 1's "translate-then-
+  # embed for low-resource languages the embedding model handles poorly."
+  action: translate_then_embed
+  target_language: en

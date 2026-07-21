@@ -4,7 +4,21 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 DocumentStatus = Literal[
-    "UPLOADED", "PARSING", "PARSED", "EMBEDDING", "EMBEDDED", "FAILED", "SUPERSEDED"
+    "UPLOADED",
+    "PARSING",
+    "PARSED",
+    "EMBEDDING",
+    "EMBEDDED",
+    "FAILED",
+    "SUPERSEDED",
+    # Phase-1 retrofit additions: differentiated failure statuses, per
+    # docs/ARCHITECTURE.md's Global-First "graceful UNSUPPORTED status with
+    # reason -- ingestion never crashes" requirement. FAILED remains for
+    # failures at the chunking/persistence stage (parsing already
+    # succeeded); these three cover parsing-stage failures specifically.
+    "QUARANTINED",  # password-protected source file
+    "FAILED_PARSE",  # corrupt/unparseable file, see Document.failure_reason
+    "UNSUPPORTED",  # unknown mime type, or exceeds the configured size ceiling
 ]
 ChunkStatus = Literal["active", "superseded"]
 EmbeddingStatus = Literal["active", "superseded"]
@@ -31,6 +45,9 @@ class Document(BaseModel):
     version: int
     status: DocumentStatus
     acl_principals: list[str] = Field(default_factory=list)
+    # Phase-1 retrofit addition: set alongside FAILED_PARSE/UNSUPPORTED so
+    # the status API can surface WHY, not just that something went wrong.
+    failure_reason: str | None = None
 
 
 class ParsedDocument(BaseModel):
@@ -65,6 +82,14 @@ class Chunk(BaseModel):
     doc_type: str | None = None
     department: str | None = None
     date: str | None = None
+    # Phase-1 retrofit addition: when translate-then-embed ran (per
+    # docs/ARCHITECTURE.md's Global-First principle), `text` holds the
+    # (possibly translated) working text used for embedding/citation
+    # matching, and `original_text` holds the untouched source-language
+    # text -- the original is never replaced, only accompanied. None means
+    # no translation ever ran for this chunk (the common case today, since
+    # translation is still a no-op stub).
+    original_text: str | None = None
 
 
 class EmbeddingRecord(BaseModel):
