@@ -97,6 +97,38 @@ bypasses these):
 - ModelRouter.select(task, language, complexity, budget) -> model_id
 - Guardrail.check(input|output, policy) -> GuardrailResult
 
+ADAPTIVE POLICY PATTERN (platform-wide principle — applies to every strategy
+choice in the system): no processing strategy is hardcoded. Every point where
+the pipeline chooses HOW to do something goes through a policy engine with the
+same shape: (1) compute a profile from observable signals, (2) evaluate
+declarative rules from config/policies/*.yaml — never rules in code, (3) log
+the decision + profile values for auditability, (4) fall back to a safe
+default on ambiguity — never fail the request over strategy selection,
+(5) tune rules only via eval-harness evidence, proposed as config diffs for
+human review. Concrete policies: ParserPolicy, ChunkingPolicy,
+EmbeddingPolicy, LanguagePolicy, QueryPolicy (retrieval strategy),
+RerankPolicy, CachePolicy, ContextPolicy, PromptPolicy, ModelRouter,
+GuardrailProfile. Rules first — no ML-based selectors until logged decisions
++ eval data justify one.
+
+GLOBAL-FIRST PRINCIPLE (platform-wide — this is a global product):
+- No component may assume English, Latin script, left-to-right text, US/EU
+  jurisdiction, a specific cloud, or internet access. Any such assumption in
+  code is a bug.
+- Any language: full Unicode (NFC-normalized), RTL scripts (Arabic, Hebrew),
+  CJK, Indic scripts, mixed-language documents. Chunk sizes are TOKEN-based
+  per the embedding model's tokenizer, never character counts (500 chars of
+  Chinese ≠ 500 chars of English).
+- Any document: known formats via ParserPolicy; unknown formats via a parser
+  plugin registry; truly unsupported files get a graceful UNSUPPORTED status
+  with reason — ingestion never crashes on input it hasn't seen.
+- Any region: deployable on any cloud or on-prem; AIR-GAPPED mode is a
+  first-class config (local models only, zero external calls — CI verifies no
+  hidden internet dependency); per-tenant data-residency pinning.
+- Any jurisdiction: compliance behaviors (retention, erasure SLA, residency,
+  PII categories) are per-jurisdiction config profiles (GDPR, HIPAA, India
+  DPDP, CCPA, PDPA, ...), not hardcoded to one legal regime.
+
 Local dev stack (docker-compose): Postgres (+pgvector), Qdrant, OpenSearch,
 Redis, MinIO, Prometheus, Grafana, Jaeger. Cloud-managed equivalents are
 swapped in via adapters at deploy time — code must not care.
@@ -155,17 +187,54 @@ persisted with versioning.
 TASKS:
 - ingestion service: POST /v1/documents (multipart upload to MinIO/S3),
   async parse jobs via Redis queue (arq or celery — pick one, justify).
+- ParserPolicy (adaptive, per the Adaptive Policy Pattern): probe each file
+  before parsing — text layer present? image quality/DPI? script/language?
+  file size? — and select the parser route: native text extraction for
+  digital documents, local OCR for clean scans, cloud OCR adapter only when
+  local confidence is below threshold AND tenant config permits external
+  processing (data-residency gate). Decision logged with probe values.
 - Parsers as DocumentParser adapters: PDF/DOCX/PPTX/XLSX/HTML (use the
   `unstructured` library as primary; verify its installed API before use),
   images → OCR (Tesseract adapter; cloud OCR adapters stubbed behind the same
   interface), audio → STT (adapter interface + one local implementation, e.g.
   faster-whisper; verify package exists at install time), email (.eml/.msg
-  parsing; IMAP connector as a separate pull-based source).
+  parsing; IMAP connector as a separate pull-based source), plain text /
+  Markdown / CSV / JSON / XML with encoding detection (chardet-style) +
+  Unicode NFC normalization, archives (ZIP with recursion + zip-bomb limits),
+  embedded objects (images inside DOCX, attachments inside emails — parsed
+  recursively with a depth limit), video (audio track → STT; keyframe OCR
+  flagged optional). Robustness: password-protected → QUARANTINED status,
+  corrupt → FAILED_PARSE with reason, oversized → streaming/chunked parsing
+  with a size ceiling; every terminal status visible via the status API.
 - preprocessing: language detection (fastText lid.176 or lingua — verify and
   pick), optional translation step behind a Translator interface (stub OK this
   phase), text cleaning, TWO chunking strategies (fixed-size with overlap, and
   semantic/structure-aware using document headings), metadata extraction
   (source, mime, language, dates, page/slide refs, checksum).
+- LanguagePolicy (adaptive): per-section language detection (documents mix
+  languages — detect per block, not per file), and per language decide:
+  embed natively with a multilingual model, or translate-then-embed for
+  low-resource languages the embedding model handles poorly (translation
+  stored ALONGSIDE the original — the original text is never replaced, and
+  citations always point to the original). RTL text preserved end-to-end.
+  Locale-aware metadata extraction: dates, numbers, currencies parsed per
+  locale with timezone kept explicit.
+- ChunkingPolicy (automatic strategy selection — this is the default path;
+  manual strategy choice is the override, not the norm): after parsing,
+  compute a DocumentProfile from the parsed output — mime type, heading/
+  section density (structural elements per 1k tokens), table presence, OCR
+  confidence (if OCR'd), speaker turns (if transcript), doc length, language.
+  A rules engine over this profile (rules in config/chunking-policy.yaml, NOT
+  hardcoded) selects strategy + chunk size + overlap per document:
+  structured docs (DOCX/HTML/PPTX with real heading density) → structure-aware,
+  minimal overlap; unstructured/low-OCR-confidence/plain text → fixed-size
+  with 15–20% overlap; spreadsheets → row-groups with repeated headers;
+  emails → per-message; transcripts → speaker/pause boundaries. Every rule
+  hit is logged with the profile values so chunking decisions are auditable.
+  Unknown/ambiguous profiles fall back to fixed-size — never fail ingestion
+  over strategy selection. Per-tenant/per-doc-type overrides in tenant config.
+  New strategies must be addable as Chunker adapters + yaml rules only, with
+  zero pipeline code changes.
 - Document versioning: re-uploading same source creates new version, old
   chunks marked superseded, checksum-based dedupe.
 - Source connectors (SourceConnector interface): beyond upload, implement
@@ -182,6 +251,13 @@ TASKS:
 
 EXIT CHECKLIST:
 [ ] Upload each fixture format via API → status endpoint reaches PARSED
+[ ] Multilingual fixtures (at minimum: Arabic RTL, Chinese, Hindi, mixed
+    English+other) parse, detect language per section, and chunk by TOKENS
+[ ] Password-protected / corrupt / unknown-format fixtures → QUARANTINED /
+    FAILED_PARSE / UNSUPPORTED statuses, never a crash
+[ ] ChunkingPolicy test matrix: each fixture type → expected strategy/overlap
+    chosen automatically; decision + profile values present in logs
+[ ] Ambiguous/corrupt fixture → falls back to fixed-size, ingestion succeeds
 [ ] Chunks in Postgres carry tenant_id, language, metadata, version
 [ ] Re-upload same file → dedupe/version behavior proven by test
 [ ] A second tenant cannot see tenant A's documents (test proves it)
@@ -197,6 +273,11 @@ TASKS:
   (e.g., a BGE-family model — resolve exact model id from Hugging Face at
   build time and record it in config/models.yaml), plus OpenAI and Cohere
   adapters gated behind API-key config. Batch, retry, rate-limit aware.
+- EmbeddingPolicy (adaptive): route each chunk to an embedding model by its
+  profile — language (multilingual vs English-optimized model), content type
+  (prose vs table vs code), domain — via config rules. A collection may hold
+  chunks embedded by different models ONLY if the vector space per collection
+  stays consistent (one model per collection; policy maps chunk → collection).
 - Embedding versioning: each EmbeddingRecord stores model_id + model_version;
   re-embedding pipeline for model upgrades.
 - VectorStore adapters: Qdrant (primary, with per-tenant payload filtering
@@ -209,6 +290,10 @@ TASKS:
   entries, AND cache entries — one API, tested. This is the foundation for
   GDPR right-to-erasure later; retrofitting it is expensive.
 - Keyword index: OpenSearch adapter (BM25) with same tenant enforcement.
+  Language-aware analyzers chosen by detected language (ICU analyzer default;
+  CJK/n-gram, stemmers per language — verify installed analyzer plugins);
+  a default English analyzer on non-English text silently ruins keyword
+  recall, so analyzer choice is part of LanguagePolicy and logged.
 - Embedding worker consuming the parse-complete queue; idempotent; dead-letter
   queue for failures.
 
@@ -228,6 +313,16 @@ GOAL: High-quality hybrid retrieval with reranking, filters, and measurable
 quality.
 
 TASKS:
+- QueryPolicy (adaptive — the heart of query-time behavior): classify query
+  intent BEFORE retrieving — factual lookup, summarization, comparison,
+  aggregation/metadata query, conversational follow-up — using cheap signals
+  first (length, keywords, filters present, history), and select per intent:
+  search mode (vector-only / hybrid / metadata-store query — aggregations
+  should NOT hit vector search), top_k, whether to decompose, whether
+  multi-hop or GraphRAG applies. Rules in config, decision logged per query.
+- RerankPolicy (adaptive): skip reranking when first-stage scores are
+  confident and well-separated (margin threshold in config) — reranking
+  everything is a hidden fixed cost. Log skip/run decision + margins.
 - retrieval service: hybrid search = vector + BM25, merged with Reciprocal
   Rank Fusion (RRF); metadata filters (date, doc type, department, language).
 - Reranker adapters: local cross-encoder via sentence-transformers (resolve
@@ -248,6 +343,11 @@ TASKS:
   fixture documents (queries + relevant chunk ids, human-authored, committed
   to repo). Compute recall@k, MRR, nDCG. THESE NUMBERS COME FROM RUNNING THE
   HARNESS — never report metrics you didn't compute.
+- Chunking auto-tuning loop: harness can re-chunk the eval corpus under
+  alternative ChunkingPolicy rules and compare retrieval scores per document
+  type; winning rules are proposed as a config/chunking-policy.yaml diff for
+  human review (never auto-applied in prod). This closes the loop: profiles
+  pick the strategy, eval numbers tune the rules.
 
 EXIT CHECKLIST:
 [ ] Hybrid beats vector-only and BM25-only on the eval set (show table)
@@ -263,6 +363,16 @@ GOAL: Retrieved context → governed prompt → right model → grounded answer
 with citations.
 
 TASKS:
+- PromptPolicy + ContextPolicy (adaptive): the template is SELECTED, not
+  hardcoded per endpoint — chosen from the registry by detected intent +
+  domain + language. Context assembly adapts to the routed model: token
+  budget derived from the model's context window (from models.yaml, never
+  hardcoded), chunk count/order driven by score distribution and dedupe,
+  truncation strategy logged. GuardrailProfile: strictness tier (e.g.
+  healthcare-strict vs retail-standard) selected per tenant/domain at
+  runtime from config, not compiled in. CachePolicy: semantic-cache
+  similarity threshold varies by query intent (tight for factual lookups,
+  cache disabled for reasoning-heavy intents) — config-ruled, logged.
 - Prompt template registry: YAML templates in config/prompts/, versioned,
   with variables schema; template types: retrieval-QA, summarization,
   reasoning, structured-output (JSON schema-validated), multi-language.
@@ -274,6 +384,12 @@ TASKS:
 - LLMProvider adapters: OpenAI, Anthropic, and one self-hosted/OSS path via
   an OpenAI-compatible endpoint (e.g., vLLM/Ollama serving). Streaming +
   non-streaming. Token usage captured per call per tenant.
+- Response language: answer in the language of the user's query by default
+  (tenant-configurable), even when retrieved chunks are in other languages;
+  citations still point to original-language chunks. Guardrails must work
+  across languages — PII recognizers configured per locale (Presidio supports
+  language-specific recognizers; verify configuration), injection screening
+  not English-only.
 - Grounding: answers must cite chunk ids; a post-generation check verifies
   every citation exists in the retrieved set; configurable behavior when the
   context doesn't contain the answer (refuse / say-unknown template).
@@ -294,6 +410,8 @@ TASKS:
 
 EXIT CHECKLIST:
 [ ] /v1/query returns answer + citations; citation-validity test passes
+[ ] Query in a non-English language over a mixed-language corpus → answer in
+    the query's language, citations to original chunks (test per fixture lang)
 [ ] Question with no answer in corpus → governed "not in documents" response
     (test proves no fabrication on 10 adversarial questions from eval set)
 [ ] PII in a document → redacted in the answer (test)
@@ -331,6 +449,11 @@ TASKS:
   validation before downstream use), excessive agency (Phase 4 tool gates),
   system prompt leakage (no secrets in prompts, leak-probe tests), vector/
   embedding weaknesses (pre-filtered ACL search, no cross-tenant collections).
+- Jurisdiction compliance profiles: per-tenant selection of a compliance
+  profile (GDPR, HIPAA, India DPDP, CCPA, PDPA, custom) driving retention
+  windows, erasure SLA, residency constraints, PII categories, and audit
+  export format — a config framework, with each profile's legal mapping
+  labeled DRAFT until counsel review.
 - Data lifecycle & GDPR/EU AI Act: right-to-erasure API (erases source doc,
   chunks, vectors, keyword index, caches, and redacts eval-store copies —
   builds on Phase 2 hard-delete; document what remains in backups + expiry),
@@ -396,6 +519,9 @@ TASKS:
 - Terraform for one target cloud first (pick per anchor customer; keep modules
   provider-shaped for later multi-cloud). Helm charts per service; ArgoCD or
   GitHub Actions CD with staging → prod promotion and canary deploys.
+- Air-gapped install path: an offline bundle (images, models, charts) that
+  deploys with zero internet access using only local models; a CI job runs
+  the full e2e suite with egress blocked to prove no hidden external calls.
 - Prompt CI: schema-validate all templates; run the eval harness against
   changed prompts; block merge on regression beyond threshold.
 - Model registry workflow: adding/changing a model_id in models.yaml requires
@@ -501,6 +627,11 @@ EXIT CHECKLIST:
 | Domain packs as config; honest compliance labeling | 8 | — |
 | Tenant offboarding: export + verified deletion | 8 | Contract requirement nobody builds until asked |
 | Structured-data / text-to-SQL (guarded), multimodal (flagged) | 8 | Scope-creep magnets — keep optional and eval-gated |
+| Adaptive policy pattern on every strategy choice (parser, chunking, embedding, language, query, rerank, cache, context, prompt, guardrails) | 1–4 | Hardcoded strategies hide everywhere; each policy needs signals → config rules → logged decision → fallback → eval-tuned |
+| Global language support: Unicode/RTL/CJK/Indic, token-based chunking, per-language analyzers, translate-then-embed fallback, answer in query language | 1, 2, 4 | English-only assumptions hide in chunk sizing, BM25 analyzers, PII recognizers |
+| Universal format robustness: unknown → plugin registry, corrupt/encrypted/oversized → graceful statuses | 1 | Real corpora are messy; one crash-prone format blocks whole batches |
+| Air-gapped deployment mode with egress-blocked CI proof | 7 | Defense/regulated buyers require it; hidden external calls disqualify you |
+| Jurisdiction compliance profiles (GDPR, HIPAA, DPDP, CCPA, PDPA as config) | 5 | Hardcoding one legal regime blocks every other market |
 
 If your agent's plan for a phase doesn't touch every matrix row mapped to that
 phase, the plan is incomplete — send it back with the row names.
@@ -508,3 +639,4 @@ phase, the plan is incomplete — send it back with the row names.
 ---
 
 *Operator notes: model names, provider pricing, and library APIs in your original spec date quickly (e.g., "GPT-4o", "Claude 3.5", "Llama 3" may be superseded). This prompt deliberately keeps all such identifiers in `config/models.yaml` with a human verification gate instead of baking them into prompts or code — that is the main structural defense against hallucinated or stale model/API references.*
+

@@ -37,6 +37,38 @@ bypasses these):
 - ModelRouter.select(task, language, complexity, budget) -> model_id
 - Guardrail.check(input|output, policy) -> GuardrailResult
 
+ADAPTIVE POLICY PATTERN (platform-wide principle — applies to every strategy
+choice in the system): no processing strategy is hardcoded. Every point where
+the pipeline chooses HOW to do something goes through a policy engine with the
+same shape: (1) compute a profile from observable signals, (2) evaluate
+declarative rules from config/policies/*.yaml — never rules in code, (3) log
+the decision + profile values for auditability, (4) fall back to a safe
+default on ambiguity — never fail the request over strategy selection,
+(5) tune rules only via eval-harness evidence, proposed as config diffs for
+human review. Concrete policies: ParserPolicy, ChunkingPolicy,
+EmbeddingPolicy, LanguagePolicy, QueryPolicy (retrieval strategy),
+RerankPolicy, CachePolicy, ContextPolicy, PromptPolicy, ModelRouter,
+GuardrailProfile. Rules first — no ML-based selectors until logged decisions
++ eval data justify one.
+
+GLOBAL-FIRST PRINCIPLE (platform-wide — this is a global product):
+- No component may assume English, Latin script, left-to-right text, US/EU
+  jurisdiction, a specific cloud, or internet access. Any such assumption in
+  code is a bug.
+- Any language: full Unicode (NFC-normalized), RTL scripts (Arabic, Hebrew),
+  CJK, Indic scripts, mixed-language documents. Chunk sizes are TOKEN-based
+  per the embedding model's tokenizer, never character counts (500 chars of
+  Chinese ≠ 500 chars of English).
+- Any document: known formats via ParserPolicy; unknown formats via a parser
+  plugin registry; truly unsupported files get a graceful UNSUPPORTED status
+  with reason — ingestion never crashes on input it hasn't seen.
+- Any region: deployable on any cloud or on-prem; AIR-GAPPED mode is a
+  first-class config (local models only, zero external calls — CI verifies no
+  hidden internet dependency); per-tenant data-residency pinning.
+- Any jurisdiction: compliance behaviors (retention, erasure SLA, residency,
+  PII categories) are per-jurisdiction config profiles (GDPR, HIPAA, India
+  DPDP, CCPA, PDPA, ...), not hardcoded to one legal regime.
+
 Local dev stack (docker-compose): Postgres (+pgvector), Qdrant, OpenSearch,
 Redis, MinIO, Prometheus, Grafana, Jaeger. Cloud-managed equivalents are
 swapped in via adapters at deploy time — code must not care.
