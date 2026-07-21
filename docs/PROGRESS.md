@@ -124,6 +124,70 @@ PR #2's `typecheck` job failed in real GitHub Actions even though every local `m
 - GitHub Actions CI cannot use `services:` for MinIO (no `command:` override support there); the workaround is a manual `docker run` step — confirm this still works after any future GH Actions runner image changes.
 - Whisper model size ("tiny") is registered in `config/models.yaml` per the anti-hallucination rule but is `verified_before_deploy: false` — a human must confirm it against provider docs before any real deploy.
 
+### Retrofit (2026-07-21) — Ingestion & preprocessing robustness, Adaptive Policy Pattern, Global-First
+The master spec update audited in `docs/RETROFIT-AUDIT.md` found Phase 1 had
+the largest gap concentration of any phase: the chunker was hardcoded
+(never consulted `ChunkingPolicy`), `FixedSizeChunker` sliced by characters
+not tokens, cleaning used NFKC (lossy for some scripts) not NFC, language
+detection ran once per document instead of per section, translate-then-embed
+discarded the pre-translation text, parsing failures collapsed to a single
+generic status (or, worse, a bug found during planning: didn't reach any
+terminal status at all), there was no parser for plain text/Markdown/CSV/
+JSON/XML, zero RTL/CJK/Indic test fixtures existed, and the already-built
+`SharePointConnector`/`BlobSourceConnector` were never wired into a running
+sync path. This retrofit closes all 12 items from the approved PLAN v2
+(`/home/codespace/.claude/plans/mutable-kindling-honey.md`), built on top of
+Phase 0's shared `core.policy_engine`.
+
+**User-confirmed scope decision**: archive/ZIP handling (a named BLOCKER in
+the audit) and embedded-object recursive parsing are deferred to their own
+follow-up — both are architecturally new features (per-member sub-document
+tracking, recursive re-entry into the pipeline, zip-bomb limits), not fixes
+to existing broken behavior, and would have roughly doubled this retrofit's
+size.
+
+#### Exit checklist results (new items, since the original Phase 1 checklist predates these requirements)
+| Item | Result | Evidence |
+|---|---|---|
+| Corrupt file reaches FAILED_PARSE with a real `failure_reason`, never stuck at UPLOADED | PASS | `test_process_document_corrupt_file_reaches_failed_parse_not_stuck_at_uploaded` |
+| Password-protected PDF reaches QUARANTINED | PASS | `test_process_document_password_protected_pdf_reaches_quarantined_status` |
+| Unmapped mime type reaches UNSUPPORTED, not a crashed job | PASS | `test_process_document_unsupported_mime_type_reaches_unsupported_status` |
+| Real RTL (Arabic), CJK (Chinese), Indic (Hindi) fixtures parse, detect language per section, chunk by tokens | PASS | `tests/integration/test_multilingual_ingestion.py` — 4 tests, including a mixed English/Arabic document proving per-section (not per-document) language detection |
+| ChunkingPolicy/LanguagePolicy/ParserPolicy: every rule + fallback tested, every decision logged via Phase 0's `policy_engine` | PASS | `test_chunking_policy.py`, `test_language_policy.py`, `test_parser_policy.py`, plus worker-level tests proving `worker.py` actually calls each policy and routes to its outcome |
+| A plain `.txt`/`.md`/`.csv`/`.json`/`.xml` file ingests end-to-end | PASS | `test_plain_text_parser.py` (including a legacy windows-1252-encoded fixture proving the charset-detection fallback) + `test_process_document_routes_low_density_plain_text_through_chunking_policy` |
+| SharePointConnector or BlobConnector sync, run through the new `run_sync()` path (not called directly), enqueues real work and propagates real deletions | PASS | `tests/unit/services/ingestion/test_sync.py` (3 tests, including a real-MinIO `BlobSourceConnector` run) + `tests/unit/services/ingestion/test_api.py`'s `POST /v1/sync/blob` HTTP-level tests (2 tests) |
+| An oversized file (over the configured ceiling) reaches UNSUPPORTED rather than exhausting memory | PASS | `test_process_document_oversized_file_reaches_unsupported_without_downloading` — a real MinIO object checked against a deliberately tiny `IngestionSettings.max_document_size_bytes`, rejected before any download |
+| `ruff check .` | PASS | `All checks passed!` |
+| `mypy .` | PASS | `Success: no issues found in 224 source files` |
+| Full `pytest -q` | PASS | `508 passed, 29 warnings in 272.85s` |
+
+#### Done (PLAN v2 items 1–12)
+1. **NFKC → NFC** in `preprocessing.cleaning.clean_text` — NFKC's compatibility folding was lossy for some scripts; NFC preserves canonical composition without that data loss.
+2. **Token-based chunk sizing**: `FixedSizeChunker` now slices via `tiktoken`'s `cl100k_base` encoding (new shared `preprocessing.tokenization` module: `count_tokens`/`encode`/`decode`) instead of raw character counts — verified empirically that this correctly reflects CJK/Arabic/Hindi's much higher tokens-per-character density than English, which raw character slicing could not.
+3. **Per-section language detection**: `pipeline.run_pipeline` now detects language per structural element (falling back to whole-document detection when no structure exists), and `structure_aware.py`'s section grouping uses a length-weighted vote (not equal-per-element) so one short heading can't outvote a long paragraph in a different language.
+4. **Translate-then-embed preserves the original text**: `Chunk.original_text` (new nullable field) carries the pre-translation text at whole-document granularity, set only when translation actually ran.
+5. **Differentiated terminal statuses + the real "stuck at UPLOADED forever" bug**: `DocumentStatus` gained `QUARANTINED`/`FAILED_PARSE`/`UNSUPPORTED`; `Document.failure_reason` added. `process_document`'s download/parse step is now inside error handling (previously it had none at all) — a corrupt file, unsupported mime type, or password-protected PDF now reaches a real terminal status instead of leaving the document at `UPLOADED` forever.
+6. **`PlainTextParser`**: new parser covering `text/plain`, `text/markdown`, `text/csv`, `application/json`, `application/xml`, `text/xml` — previously entirely unsupported. Decodes UTF-8 strict first, then `charset_normalizer`, then a lossy last resort; never crashes on encoding.
+7. **`ChunkingPolicy`**: `config/policies/chunking.yaml`, consulted by `worker._build_chunker` — replaces the previously-hardcoded `StructureAwareChunker` used for every document regardless of type.
+8. **`LanguagePolicy`**: `config/policies/language.yaml` — decides `embed_natively` vs. `translate_then_embed`; the underlying `Translator` stays the existing no-op stub, honestly scoped as "the decision is now config-driven," not "translation is now real."
+9. **`ParserPolicy`**: `config/policies/parser.yaml` — routes mime types among the 5 parsers; an unmapped mime type resolves gracefully to `UNSUPPORTED` instead of `ParserRegistry` raising.
+10. **Wired `BlobSourceConnector`/`SharePointConnector` into a real sync path**: new `ingestion.sync.run_sync()` (shared `process_parsed_document()` extracted from `process_document()` so upload-path and sync-path share dedupe/policy/persistence logic) + `POST /v1/sync/{connector_name}` (blob only — SharePoint has no real Graph credentials in this environment, disclosed in the endpoint's own docstring rather than silently guessed).
+11. **Real RTL/CJK/Indic fixtures**: real Arabic/Chinese/Hindi `.txt` files plus a mixed English/Arabic HTML file, generated via the committed `generate_fixtures.py` script; `tests/integration/test_multilingual_ingestion.py` proves correct language detection, sane token-based chunk sizing, and per-section (not per-document) language tagging through the real `/v1/documents` API.
+12. **Oversized-file size ceiling**: new `IngestionSettings.max_document_size_bytes` (default 50MB, stated ASSUMPTION) + `storage.get_object_size()` (a `HEAD` request) checked before any download — a reject ceiling, explicitly not streaming/chunked parsing (every parser here still reads its input in full).
+
+#### Stubbed / deferred (intentionally)
+- Archive/ZIP handling and embedded-object recursive parsing — user-confirmed deferral to a dedicated follow-up (see above).
+- DOCX/PPTX/XLSX password-protection detection — PDF-only via `pypdf` in this pass; other formats fall through to `FAILED_PARSE` (correct, if less specific) rather than being silently mis-detected as `QUARANTINED`.
+- True streaming/chunked parsing for oversized files — item 12 is a size ceiling, not a re-architecture of each parser to consume input incrementally.
+- `LanguagePolicy`'s `translate_then_embed` outcome is real and config-driven, but the `Translator` behind it is still the pre-existing no-op stub — unchanged, already-accepted Phase 1 scope boundary.
+- `ParserPolicy` routes among parsers that already exist; it does not add a cloud-OCR fallback gated by data residency (the audit's original description) — no cloud OCR adapter exists in this codebase at all yet.
+
+#### Known risks / watch items
+- `tiktoken`'s vocabulary isn't identical to `BAAI/bge-small-en-v1.5`'s own tokenizer — token counts are a practical proxy for relative density (verified empirically to reflect CJK-vs-English differences correctly), not an exact match to what the embedding model itself will tokenize.
+- `config/policies/chunking.yaml`/`language.yaml`/`parser.yaml`'s rules are hand-authored starting points, not yet tuned against real eval-harness evidence — consistent with the Adaptive Policy Pattern's own stated rule ("tune only via eval-harness evidence, as config diffs"), not claimed as optimal.
+- A real filename-convention bug was caught and fixed during this retrofit (not by the user): `config/policies/<name>.yaml` must exactly match the string passed as `evaluate_policy`'s first argument — a mismatch causes a silent, unlogged-as-an-error fallback with no exception. All three new policy files were double-checked against this convention after the first miss (chunking).
+- `run_sync()`'s deletion propagation calls each store's `delete()` directly rather than through Phase 2's `ErasureService` registry — that consolidation is Phase 2's own retrofit item, not Phase 1's.
+
 ### Top 3 priorities for Phase 2
 1. `VectorStore` adapters (Qdrant primary, pgvector fallback) with per-tenant payload filtering enforced in the adapter itself — "impossible to query without tenant_id," mirroring the Postgres repository pattern already proven in Phase 1.
 2. Hard-delete path across chunks/vectors/keyword-index/cache in one API — GAP-MATRIX flags this as expensive to retrofit later, and Phase 1's chunk/document model (with `status` fields) is already shaped to support it.

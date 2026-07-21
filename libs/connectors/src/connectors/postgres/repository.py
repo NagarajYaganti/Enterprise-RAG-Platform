@@ -18,6 +18,7 @@ def _document_to_model(row: DocumentORM) -> Document:
         version=row.version,
         status=row.status,  # type: ignore[arg-type]
         acl_principals=list(row.acl_principals),
+        failure_reason=row.failure_reason,
     )
 
 
@@ -59,6 +60,7 @@ def _chunk_to_model(row: ChunkORM) -> Chunk:
         doc_type=row.doc_type,
         department=row.department,
         date=row.date,
+        original_text=row.original_text,
     )
 
 
@@ -77,6 +79,7 @@ class DocumentRepository:
         row.version = document.version
         row.status = document.status
         row.acl_principals = list(document.acl_principals)
+        row.failure_reason = document.failure_reason
         self._session.flush()
         return _document_to_model(row)
 
@@ -136,6 +139,7 @@ class ChunkRepository:
                 doc_type=chunk.doc_type,
                 department=chunk.department,
                 date=chunk.date,
+                original_text=chunk.original_text,
             )
             self._session.add(row)
         self._session.flush()

@@ -3,9 +3,23 @@ import uuid
 from core.interfaces import Chunker
 from core.models import Chunk, ParsedDocument
 
+from preprocessing.tokenization import decode, encode
+
+# cl100k_base (preprocessing.tokenization) is a practical, lightweight
+# token-count proxy -- not vocab-identical to the embedding model's own
+# tokenizer (pulling sentence-transformers/transformers into this service
+# just to count tokens would be a large, disproportionate dependency
+# footprint for a different service than the one that actually embeds),
+# but verified empirically that it demonstrably fixes the actual problem
+# the spec names: 500 characters of Chinese text encodes to far more
+# tokens than 500 characters of English, so character-based sizing
+# produces wildly inconsistent real chunk sizes across scripts.
+
 
 class FixedSizeChunker(Chunker):
-    """Chunker adapter: fixed-size windows over raw_text with overlap."""
+    """Chunker adapter: fixed-size windows over raw_text with overlap,
+    sized in TOKENS, not characters.
+    """
 
     def __init__(self, chunk_size: int = 500, overlap: int = 50) -> None:
         if overlap >= chunk_size:
@@ -16,12 +30,12 @@ class FixedSizeChunker(Chunker):
     def chunk(
         self, doc: ParsedDocument, strategy: str, *, language: str = "unknown", version: int = 1
     ) -> list[Chunk]:
-        text = doc.raw_text
+        tokens = encode(doc.raw_text)
         step = self._chunk_size - self._overlap
         pieces = []
         start = 0
-        while start < len(text):
-            pieces.append(text[start : start + self._chunk_size])
+        while start < len(tokens):
+            pieces.append(decode(tokens[start : start + self._chunk_size]))
             start += step
 
         return [

@@ -40,3 +40,8 @@ def upload_fileobj(s3_client: object, bucket: str, key: str, fileobj: IO[bytes])
 
 def download_fileobj(s3_client: object, bucket: str, key: str, fileobj: IO[bytes]) -> None:
     s3_client.download_fileobj(bucket, key, fileobj)  # type: ignore[attr-defined]
+
+
+def get_object_size(s3_client: object, bucket: str, key: str) -> int:
+    response = s3_client.head_object(Bucket=bucket, Key=key)  # type: ignore[attr-defined]
+    return int(response["ContentLength"])
