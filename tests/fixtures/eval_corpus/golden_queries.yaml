@@ -81,3 +81,26 @@ golden_queries:
   - query: "When is form ACH-2291 required?"
     relevant_chunk_ids: ["doc-22"]
     style: exact_term
+
+  # doc-23/doc-24: long multi-paragraph documents added for the chunking
+  # auto-tuning loop (Phase-3 retrofit). relevant_chunk_ids names the
+  # DOCUMENT id, matching every other entry's own convention (chunk_id ==
+  # document_id in the existing single-chunk-per-document harness) --
+  # the auto-tuning harness maps each real, multi-boundary chunk a trial
+  # produces back to its parent document_id before scoring, since exact
+  # chunk ids/boundaries are expected to differ between policy variants.
+  - query: "What debt-to-income ratio is required for loan approval?"
+    relevant_chunk_ids: ["doc-23"]
+    style: general
+
+  - query: "How long after a denial can a loan applicant appeal?"
+    relevant_chunk_ids: ["doc-23"]
+    style: paraphrase
+
+  - query: "What must happen before a patient's first clinical appointment?"
+    relevant_chunk_ids: ["doc-24"]
+    style: general
+
+  - query: "How often must chronic care patients be scheduled for follow-up?"
+    relevant_chunk_ids: ["doc-24"]
+    style: paraphrase

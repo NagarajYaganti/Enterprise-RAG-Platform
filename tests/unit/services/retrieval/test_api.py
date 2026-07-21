@@ -77,7 +77,13 @@ def test_retrieve_response_includes_all_expected_fields(
     )
 
     body = response.json()
-    assert set(body.keys()) == {"query_id", "rewritten_query", "chunks"}
+    assert set(body.keys()) == {
+        "query_id",
+        "rewritten_query",
+        "query_intent",
+        "reranked",
+        "chunks",
+    }
 
 
 def test_retrieve_persists_the_turn_for_future_conversation_memory(
