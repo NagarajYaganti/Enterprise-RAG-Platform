@@ -1,0 +1,21 @@
+id: structured-output-common-en
+type: structured-output
+domain: common
+language: en
+version: "1"
+variables:
+  - query
+  - context
+  - json_schema
+template_text: |
+  Answer the following question using only the context provided, and
+  respond with a single JSON object that validates against this JSON
+  Schema — no other text before or after the JSON:
+
+  JSON Schema:
+  {json_schema}
+
+  Context:
+  {context}
+
+  Question: {query}

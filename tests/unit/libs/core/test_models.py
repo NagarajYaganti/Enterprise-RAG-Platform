@@ -2,20 +2,25 @@ from datetime import datetime, timezone
 
 import pytest
 from core.models import (
+    AgentStep,
+    AgentTrace,
     ChatTurn,
     Chunk,
     Completion,
     Document,
     EmbeddingRecord,
     Entity,
+    GuardrailResult,
     KeywordSearchHit,
     ParsedDocument,
+    PromptTemplate,
     Query,
     Relation,
     RetrievalFilters,
     RetrievalResult,
     ScoredChunk,
     Tenant,
+    TokenUsageRecord,
     Vector,
     VectorSearchHit,
 )
@@ -432,3 +437,96 @@ def test_completion_requires_tenant_id() -> None:
     assert completion.tenant_id == TENANT_ID
     with pytest.raises(ValidationError):
         Completion(model_id="gpt-x", text="answer")  # type: ignore[call-arg]
+
+
+def test_guardrail_result_defaults_no_reason_codes_and_no_redaction() -> None:
+    result = GuardrailResult(passed=True, policy="pii")
+    assert result.reason_codes == []
+    assert result.redacted_text is None
+
+
+def test_guardrail_result_rejects_unknown_reason_code() -> None:
+    with pytest.raises(ValidationError):
+        GuardrailResult(passed=False, policy="pii", reason_codes=["NOT_A_REAL_CODE"])  # type: ignore[list-item]
+
+
+def test_guardrail_result_accepts_known_reason_codes() -> None:
+    result = GuardrailResult(
+        passed=False,
+        policy="output_policy:healthcare",
+        reason_codes=["OUTPUT_POLICY_VIOLATION"],
+        redacted_text="[REDACTED]",
+    )
+    assert result.reason_codes == ["OUTPUT_POLICY_VIOLATION"]
+    assert result.redacted_text == "[REDACTED]"
+
+
+def test_prompt_template_requires_all_fields() -> None:
+    template = PromptTemplate(
+        id="retrieval-qa-common-en",
+        type="retrieval-qa",
+        domain="common",
+        language="en",
+        template_text="Answer using: {context}",
+        variables=["context", "query"],
+        version="1",
+    )
+    assert template.type == "retrieval-qa"
+    with pytest.raises(ValidationError):
+        PromptTemplate(
+            id="x", domain="common", language="en", template_text="t", version="1"
+        )  # type: ignore[call-arg]
+
+
+def test_prompt_template_rejects_unknown_type() -> None:
+    with pytest.raises(ValidationError):
+        PromptTemplate(
+            id="x",
+            type="not-a-real-type",  # type: ignore[arg-type]
+            domain="common",
+            language="en",
+            template_text="t",
+            version="1",
+        )
+
+
+def test_agent_step_defaults_no_approval_required() -> None:
+    step = AgentStep(id="step-1", tenant_id=TENANT_ID, tool_name="search")
+    assert step.requires_approval is False
+    assert step.approved_by is None
+
+
+def test_agent_step_pending_approval_state() -> None:
+    step = AgentStep(
+        id="step-1", tenant_id=TENANT_ID, tool_name="send_email", requires_approval=True
+    )
+    assert step.requires_approval is True
+    assert step.approved_by is None  # pending — not yet approved
+
+
+def test_agent_trace_requires_tenant_id() -> None:
+    trace = AgentTrace(id="trace-1", tenant_id=TENANT_ID, query_id="q-1", max_iterations=5)
+    assert trace.completed is False
+    assert trace.steps == []
+    with pytest.raises(ValidationError):
+        AgentTrace(id="trace-1", query_id="q-1", max_iterations=5)  # type: ignore[call-arg]
+
+
+def test_token_usage_record_requires_tenant_id() -> None:
+    record = TokenUsageRecord(
+        id="usage-1",
+        tenant_id=TENANT_ID,
+        model_id="gpt-5.6-luna",
+        prompt_tokens=100,
+        completion_tokens=50,
+        created_at=datetime.now(timezone.utc),
+    )
+    assert record.tenant_id == TENANT_ID
+    with pytest.raises(ValidationError):
+        TokenUsageRecord(
+            id="usage-1",
+            model_id="gpt-5.6-luna",
+            prompt_tokens=100,
+            completion_tokens=50,
+            created_at=datetime.now(timezone.utc),
+        )  # type: ignore[call-arg]

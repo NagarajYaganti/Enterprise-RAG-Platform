@@ -146,3 +146,37 @@ models:
     verified_before_deploy: false
     verified_date: null
     verified_by: null
+
+  # id and pricing below came from a WebFetch of platform.claude.com/docs/en/
+  # about-claude/models/overview during Phase 4 planning (2026-07-20). Same
+  # lower-confidence caveat as gpt-5.6-luna above: WebFetch summarizes
+  # fetched content through an intermediate model before returning it — a
+  # human must re-verify directly against the live page before deploy.
+  # "The best combination of speed and intelligence" per that page — the
+  # general-purpose / higher-capability tier for ModelRouter's "complex" path.
+  - id: claude-sonnet-5
+    provider: anthropic
+    task: generation
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.003   # from "$3 / input MTok" ÷ 1000; output price ($15/MTok) unconfirmed
+    latency_class: medium
+    languages: ["multilingual"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  # Same source/confidence caveat as claude-sonnet-5 above. "The fastest
+  # model with near-frontier intelligence" per that page — the cheap/fast
+  # tier for ModelRouter's "simple" path, alongside gpt-5.6-luna.
+  - id: claude-haiku-4-5
+    provider: anthropic
+    task: generation
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.001   # from "$1 / input MTok" ÷ 1000; output price ($5/MTok) unconfirmed
+    latency_class: low
+    languages: ["multilingual"]
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
