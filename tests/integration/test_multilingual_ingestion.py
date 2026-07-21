@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from ingestion.main import app
 from sqlalchemy.orm import Session
 
-from tests.integration.conftest import run_worker_burst
+from tests.integration.conftest import run_embed_worker_burst, run_worker_burst
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "documents"
 
@@ -20,6 +20,18 @@ SINGLE_LANGUAGE_CASES = [
     ("sample_arabic.txt", "text/plain", "ar"),
     ("sample_chinese.txt", "text/plain", "zh"),
     ("sample_hindi.txt", "text/plain", "hi"),
+]
+
+# One real word from each fixture's real sentence, confirmed via the
+# running OpenSearch cluster's own _analyze API to survive that language's
+# analyzer as an exact token (Arabic's stemmer, Chinese's cjk bigramming,
+# Hindi's stemmer) -- proves the PER-LANGUAGE ANALYZER actually improves
+# real keyword recall (Phase-2 retrofit), not just that per-language
+# indices exist.
+KEYWORD_SEARCH_CASES = [
+    ("sample_arabic.txt", "ar", "arabic", "قروض"),
+    ("sample_chinese.txt", "zh", "cjk", "贷款"),
+    ("sample_hindi.txt", "hi", "hindi", "ऋण"),
 ]
 
 
@@ -109,3 +121,74 @@ async def test_mixed_language_document_detects_language_per_section_not_per_docu
     arabic_chunk = next(c for c in chunks if c.language == "ar")
     assert "Loan Policy" in english_chunk.text or "business days" in english_chunk.text
     assert "سياسة القروض" in arabic_chunk.text or "يجب مراجعة" in arabic_chunk.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filename,language,analyzer,query_term", KEYWORD_SEARCH_CASES)
+async def test_non_latin_document_is_keyword_searchable_with_its_own_analyzer(
+    db_session: Session,
+    clean_queue: None,
+    clean_embedding_stores: None,
+    filename: str,
+    language: str,
+    analyzer: str,
+    query_term: str,
+) -> None:
+    # End-to-end proof that the per-language OpenSearch analyzer (Phase-2
+    # retrofit) genuinely improves real keyword recall for non-Latin
+    # scripts -- docs/ARCHITECTURE.md's Global-First principle names this
+    # exact failure mode ("a default English analyzer on non-English text
+    # silently ruins keyword recall"). This runs the FULL real pipeline:
+    # /v1/documents -> parse worker -> embed worker (which is what actually
+    # writes into OpenSearch) -> a real BM25 search against the resolved
+    # per-language index.
+    from embedding.worker import INDEX_NAME
+    from opensearchpy import OpenSearch
+
+    token = _make_token("tenant-acme")
+    with TestClient(app) as client:
+        with open(FIXTURES / filename, "rb") as f:
+            upload_response = client.post(
+                "/v1/documents",
+                files={"file": (filename, f, "text/plain")},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert upload_response.status_code == 200
+        document_id = upload_response.json()["id"]
+
+        parse_complete, parse_failed = await run_worker_burst()
+        assert parse_failed == 0
+        assert parse_complete >= 1
+
+        status_response = client.get(
+            f"/v1/documents/{document_id}", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert status_response.json()["status"] == "PARSED"
+
+    embed_complete, embed_failed = await run_embed_worker_burst()
+    assert embed_failed == 0
+    assert embed_complete >= 1
+
+    opensearch_client = OpenSearch(
+        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
+    )
+    real_index = f"{INDEX_NAME}_{analyzer}"
+    hits = opensearch_client.search(
+        index=real_index,
+        body={
+            "query": {
+                "bool": {
+                    "must": [{"match": {"text": query_term}}],
+                    "filter": [
+                        {"term": {"tenant_id": "tenant-acme"}},
+                        {"term": {"document_id": document_id}},
+                    ],
+                }
+            }
+        },
+    )["hits"]["hits"]
+
+    assert len(hits) > 0, (
+        f"{filename}: query {query_term!r} found nothing in real index {real_index!r}"
+    )
+    assert hits[0]["_source"]["language"] == language

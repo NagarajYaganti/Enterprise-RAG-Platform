@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Generator
 from typing import Any
 
@@ -49,10 +50,10 @@ def keyword_index() -> Generator[OpenSearchIndex, None, None]:
     client = OpenSearch(
         hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
     )
-    client.indices.delete(index=OPENSEARCH_INDEX, ignore=[404])
+    client.indices.delete(index=f"{OPENSEARCH_INDEX}_*", ignore=[404])
     ensure_index(client, OPENSEARCH_INDEX)
     yield OpenSearchIndex(client, OPENSEARCH_INDEX)
-    client.indices.delete(index=OPENSEARCH_INDEX, ignore=[404])
+    client.indices.delete(index=f"{OPENSEARCH_INDEX}_*", ignore=[404])
 
 
 @pytest.fixture(scope="module")
@@ -345,6 +346,133 @@ def test_process_embedding_job_extracts_entities_and_relations_when_graphrag_ena
     )
     assert {e.name for e in entities} == {"Acme Bank", "Acme Lending Corp."}
     assert len(relations) == 1
+
+
+@pytest.fixture()
+def raw_clients() -> Generator[tuple[QdrantClient, OpenSearch], None, None]:
+    # EmbeddingPolicy's one real routing rule hardcodes "chunks_tables" as
+    # the alternate collection/index name (config/policies/embedding.yaml)
+    # -- not test-scoped, since that's the real config a real worker reads.
+    # Cleaned up before/after so this test doesn't leak into other runs.
+    qdrant_client = QdrantClient(url=QDRANT_URL)
+    opensearch_client = OpenSearch(
+        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
+    )
+    if qdrant_client.collection_exists("chunks_tables"):
+        qdrant_client.delete_collection("chunks_tables")
+    opensearch_client.indices.delete(index="chunks_tables_*", ignore=[404])
+    yield qdrant_client, opensearch_client
+    if qdrant_client.collection_exists("chunks_tables"):
+        qdrant_client.delete_collection("chunks_tables")
+    opensearch_client.indices.delete(index="chunks_tables_*", ignore=[404])
+
+
+def test_spreadsheet_document_routes_via_embedding_policy_to_a_separate_real_collection(
+    session: Session,
+    vector_store: QdrantVectorStore,
+    keyword_index: OpenSearchIndex,
+    embedding_provider: SentenceTransformersProvider,
+    raw_clients: tuple[QdrantClient, OpenSearch],
+) -> None:
+    # Proves EmbeddingPolicy (Phase-2 retrofit) genuinely routes a
+    # spreadsheet document's chunks to a real, SEPARATE Qdrant collection +
+    # OpenSearch index (chunks_tables*) -- not just that the policy
+    # function returns the right dict in isolation. Explicit, disclosed
+    # limitation: retrieval.pipeline/orchestrator.pipeline do not search
+    # this alternate collection yet -- that's Phase 3/4's own retrofit
+    # territory, verified here only at the storage layer.
+    qdrant_client, opensearch_client = raw_clients
+    doc_repo = DocumentRepository(session)
+    chunk_repo = ChunkRepository(session)
+    spreadsheet_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    doc_repo.upsert(
+        Document(
+            id="doc-spreadsheet",
+            tenant_id="tenant-a",
+            source_uri="s3://bucket/doc-spreadsheet",
+            mime_type=spreadsheet_mime,
+            checksum="abc123",
+            version=1,
+            status="PARSED",
+        )
+    )
+    chunk_repo.bulk_insert(
+        [
+            Chunk(
+                id="doc-spreadsheet-chunk-0",
+                tenant_id="tenant-a",
+                document_id="doc-spreadsheet",
+                text="product,units_sold,revenue",
+                position=0,
+                language="en",
+                version=1,
+                search_analyzer="english",
+            )
+        ]
+    )
+    session.commit()
+
+    count = process_embedding_job(
+        session,
+        vector_store,
+        keyword_index,
+        embedding_provider,
+        "tenant-a",
+        "doc-spreadsheet",
+        MODEL_ID,
+        "1",
+        qdrant_client=qdrant_client,
+        opensearch_client=opensearch_client,
+    )
+
+    assert count == 1
+    assert qdrant_client.collection_exists("chunks_tables")
+    vector_id = str(
+        uuid.uuid5(uuid.NAMESPACE_URL, "doc-spreadsheet-chunk-0:BAAI/bge-small-en-v1.5")
+    )
+    assert qdrant_client.retrieve("chunks_tables", ids=[vector_id]) != []
+    # not in the default test-scoped collection
+    assert _count_vectors_for_document(vector_store, "tenant-a", "doc-spreadsheet") == 0
+
+    assert opensearch_client.indices.exists(index="chunks_tables_english")
+    hits = opensearch_client.search(
+        index="chunks_tables_*",
+        body={"query": {"term": {"document_id": "doc-spreadsheet"}}},
+    )["hits"]["hits"]
+    assert len(hits) == 1
+
+
+def test_prose_document_still_uses_the_bound_default_store(
+    session: Session,
+    vector_store: QdrantVectorStore,
+    keyword_index: OpenSearchIndex,
+    embedding_provider: SentenceTransformersProvider,
+    raw_clients: tuple[QdrantClient, OpenSearch],
+) -> None:
+    # An ordinary (non-spreadsheet) document must keep landing in the
+    # SAME bound default store even when qdrant_client/opensearch_client
+    # are provided -- EmbeddingPolicy's fallback matches today's real
+    # default, so passing the raw clients through must not change existing
+    # behavior for the common case.
+    qdrant_client, opensearch_client = raw_clients
+    _seed_document_with_chunks(session, "tenant-a", "doc-prose", n=1)
+
+    count = process_embedding_job(
+        session,
+        vector_store,
+        keyword_index,
+        embedding_provider,
+        "tenant-a",
+        "doc-prose",
+        MODEL_ID,
+        "1",
+        qdrant_client=qdrant_client,
+        opensearch_client=opensearch_client,
+    )
+
+    assert count == 1
+    assert _count_vectors_for_document(vector_store, "tenant-a", "doc-prose") == 1
+    assert not qdrant_client.collection_exists("chunks_tables")
 
 
 def test_graphrag_settings_defaults_to_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

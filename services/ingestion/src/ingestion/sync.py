@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from connectors.erasure import ErasureService
 from connectors.postgres.repository import ChunkRepository, DocumentRepository
 from core.interfaces import KeywordIndex, SourceConnector, VectorStore
 from preprocessing.language_detect import LanguageDetector
@@ -57,12 +58,25 @@ def run_sync(
         )
         processed += 1
 
+    # Phase-2 retrofit: reuses the same ErasureService hard-delete
+    # orchestrator services/ingestion's DELETE /v1/documents/{id} endpoint
+    # now uses, rather than maintaining two independent copies of this
+    # exact 4-step deletion sequence (chunks, vectors, keyword-index,
+    # document row). No session.commit() inside the hooks, matching this
+    # function's prior behavior -- callers control the session's commit
+    # boundary, same as process_parsed_document's dedupe/persist path.
+    def delete_chunks(t: str, d: str) -> None:
+        chunk_repo.hard_delete_for_document(t, d)
+
+    erasure_service = ErasureService()
+    erasure_service.register("chunks", delete_chunks)
+    erasure_service.register("vectors", vector_store.delete)
+    erasure_service.register("keyword_index", keyword_index.delete)
+    erasure_service.register("document", document_repo.hard_delete)
+
     deleted = 0
     for document_id in connector.list_deletions(since):
-        chunk_repo.hard_delete_for_document(tenant_id, document_id)
-        vector_store.delete(tenant_id, document_id)
-        keyword_index.delete(tenant_id, document_id)
-        document_repo.hard_delete(tenant_id, document_id)
+        erasure_service.erase_document(tenant_id, document_id)
         deleted += 1
 
     return SyncResult(tenant_id=tenant_id, documents_processed=processed, documents_deleted=deleted)

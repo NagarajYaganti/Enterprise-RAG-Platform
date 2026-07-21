@@ -58,6 +58,6 @@ async def test_upload_to_searchable_in_qdrant_and_opensearch(
         hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
     )
     kw_search = opensearch_client.search(
-        index=INDEX_NAME, body={"query": {"term": {"document_id": document_id}}}
+        index=f"{INDEX_NAME}_*", body={"query": {"term": {"document_id": document_id}}}
     )
     assert len(kw_search["hits"]["hits"]) > 0

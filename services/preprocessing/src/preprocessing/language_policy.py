@@ -5,7 +5,11 @@ from core.policy_engine import evaluate_policy
 # Matches config/policies/language.yaml's own fallback -- kept here too so
 # evaluate_policy still degrades gracefully (per the Adaptive Policy
 # Pattern's "never fail the request") even if that file is ever missing.
-FALLBACK_OUTCOME = {"action": "translate_then_embed", "target_language": "en"}
+FALLBACK_OUTCOME = {
+    "action": "translate_then_embed",
+    "target_language": "en",
+    "analyzer": "standard",
+}
 
 
 def compute_language_profile(

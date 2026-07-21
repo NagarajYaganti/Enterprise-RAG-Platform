@@ -49,10 +49,10 @@ def keyword_index() -> Generator[OpenSearchIndex, None, None]:
     client = OpenSearch(
         hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
     )
-    client.indices.delete(index=OPENSEARCH_INDEX, ignore=[404])
+    client.indices.delete(index=f"{OPENSEARCH_INDEX}_*", ignore=[404])
     ensure_index(client, OPENSEARCH_INDEX)
     yield OpenSearchIndex(client, OPENSEARCH_INDEX)
-    client.indices.delete(index=OPENSEARCH_INDEX, ignore=[404])
+    client.indices.delete(index=f"{OPENSEARCH_INDEX}_*", ignore=[404])
 
 
 @pytest.fixture(scope="module")

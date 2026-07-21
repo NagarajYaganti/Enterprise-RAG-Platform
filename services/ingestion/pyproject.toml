@@ -15,6 +15,7 @@ dependencies = [
     "embedding",
     "fastapi==0.139.2",
     "observability",
+    "orchestrator",
     "prometheus-client==0.25.0",
     "psycopg[binary]==3.3.4",
     "python-multipart==0.0.32",
@@ -31,3 +32,4 @@ core = { workspace = true }
 observability = { workspace = true }
 connectors = { workspace = true }
 embedding = { workspace = true }
+orchestrator = { workspace = true }

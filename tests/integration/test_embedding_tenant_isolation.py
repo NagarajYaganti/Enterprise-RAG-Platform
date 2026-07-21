@@ -60,7 +60,7 @@ async def test_identical_documents_for_two_tenants_search_returns_own_tenant_onl
     )
     for tenant_id in ("tenant-a", "tenant-b"):
         hits = opensearch_client.search(
-            index=INDEX_NAME, body={"query": {"term": {"tenant_id": tenant_id}}}
+            index=f"{INDEX_NAME}_*", body={"query": {"term": {"tenant_id": tenant_id}}}
         )["hits"]["hits"]
         assert len(hits) > 0
         assert all(h["_source"]["tenant_id"] == tenant_id for h in hits)

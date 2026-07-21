@@ -1,0 +1,26 @@
+policy: embedding
+version: "1"
+rules:
+  - name: spreadsheet_table_content
+    when:
+      content_type: { eq: "table" }
+    then:
+      # Same model_id/model_version as the fallback below -- this proves
+      # real multi-collection ROUTING mechanics (a different collection/
+      # index actually gets used and populated) without needing a second
+      # live embedding model. OpenAI/Cohere (config/models.yaml's other two
+      # embedding entries) require API keys not present in this
+      # environment, an already-established precedent from Phases 2-4 --
+      # a real cross-model-consistency proof is deferred until a live key
+      # exists, disclosed here rather than silently assumed.
+      model_id: BAAI/bge-small-en-v1.5
+      model_version: "1"
+      collection_name: chunks_tables
+      index_name: chunks_tables
+fallback:
+  # Every document type not explicitly routed elsewhere keeps exactly
+  # today's real default -- decide_embedding_route() builds this from
+  # get_default_embedding_model() at call time, so this file never needs
+  # to duplicate the actual default model id/version.
+  collection_name: chunks
+  index_name: chunks
