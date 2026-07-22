@@ -32,7 +32,8 @@ def decide_language_action(
     detected_language: str,
     native_languages: tuple[str, ...] = ("en",),
     directory: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     profile = compute_language_profile(detected_language, native_languages)
-    decision = evaluate_policy("language", profile, FALLBACK_OUTCOME, directory)
+    decision = evaluate_policy("language", profile, FALLBACK_OUTCOME, directory, tenant_id)
     return decision.outcome

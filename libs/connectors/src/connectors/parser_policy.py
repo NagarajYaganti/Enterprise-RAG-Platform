@@ -11,7 +11,9 @@ from core.policy_engine import evaluate_policy
 FALLBACK_OUTCOME = {"route": "unsupported"}
 
 
-def decide_parser_route(mime_type: str, directory: str | None = None) -> dict[str, Any]:
+def decide_parser_route(
+    mime_type: str, directory: str | None = None, tenant_id: str | None = None
+) -> dict[str, Any]:
     """Routes among the parsers that already exist (ParserRegistry). Does
     NOT add cloud-OCR-fallback-gated-by-residency (an explicit scope
     boundary, docs/RETROFIT-AUDIT.md's Phase 1 retrofit plan): no cloud OCR
@@ -20,5 +22,5 @@ def decide_parser_route(mime_type: str, directory: str | None = None) -> dict[st
     there is nothing to gate residency-wise yet.
     """
     profile = {"mime_type": mime_type}
-    decision = evaluate_policy("parser", profile, FALLBACK_OUTCOME, directory)
+    decision = evaluate_policy("parser", profile, FALLBACK_OUTCOME, directory, tenant_id)
     return decision.outcome

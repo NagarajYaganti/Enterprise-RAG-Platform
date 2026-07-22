@@ -18,7 +18,7 @@ def decide_guardrail_profile(
     tenant_id: str, domain: str, directory: str | None = None
 ) -> dict[str, Any]:
     profile = compute_guardrail_profile(tenant_id, domain)
-    decision = evaluate_policy("guardrail_profile", profile, FALLBACK_OUTCOME, directory)
+    decision = evaluate_policy("guardrail_profile", profile, FALLBACK_OUTCOME, directory, tenant_id)
     return decision.outcome
 
 

@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from core.model_registry import get_default_embedding_model
@@ -32,3 +33,18 @@ def test_missing_policy_file_falls_back_to_the_real_default_model(tmp_path: Path
     assert outcome["model_version"] == default_model["version"]
     assert outcome["collection_name"] == "chunks"
     assert outcome["index_name"] == "chunks"
+
+
+def test_a_real_tenant_id_reaches_the_policy_decision_log() -> None:
+    target_logger = logging.getLogger("core.policy_engine")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[assignment]
+    target_logger.addHandler(handler)
+    try:
+        decide_embedding_route(HTML_MIME, "en", tenant_id="tenant-acme")
+    finally:
+        target_logger.removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert decision_records[-1].tenant_id == "tenant-acme"  # type: ignore[attr-defined]

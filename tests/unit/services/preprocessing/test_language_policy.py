@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from preprocessing.language_policy import FALLBACK_OUTCOME, decide_language_action
@@ -54,3 +55,18 @@ def test_custom_native_languages_override_still_gets_its_own_analyzer() -> None:
 def test_unknown_language_falls_back_to_standard_analyzer() -> None:
     outcome = decide_language_action("unknown")
     assert outcome["analyzer"] == "standard"
+
+
+def test_a_real_tenant_id_reaches_the_policy_decision_log() -> None:
+    target_logger = logging.getLogger("core.policy_engine")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[assignment]
+    target_logger.addHandler(handler)
+    try:
+        decide_language_action("en", tenant_id="tenant-acme")
+    finally:
+        target_logger.removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert decision_records[-1].tenant_id == "tenant-acme"  # type: ignore[attr-defined]

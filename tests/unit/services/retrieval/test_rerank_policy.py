@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from retrieval.rerank_policy import (
@@ -35,3 +36,19 @@ def test_missing_policy_file_falls_back_safely(tmp_path: Path) -> None:
     profile = compute_rerank_profile([0.02, 0.001])
     outcome = decide_rerank_action(profile, directory=str(tmp_path))
     assert outcome == FALLBACK_OUTCOME
+
+
+def test_a_real_tenant_id_reaches_the_policy_decision_log() -> None:
+    target_logger = logging.getLogger("core.policy_engine")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[assignment]
+    target_logger.addHandler(handler)
+    try:
+        profile = compute_rerank_profile([0.02, 0.001])
+        decide_rerank_action(profile, tenant_id="tenant-acme")
+    finally:
+        target_logger.removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert decision_records[-1].tenant_id == "tenant-acme"  # type: ignore[attr-defined]

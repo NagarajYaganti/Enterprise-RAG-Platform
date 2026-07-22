@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from connectors.guardrails.guardrail_profile import (
@@ -34,3 +35,22 @@ def test_compiled_patterns_actually_match_real_text() -> None:
 
     assert any(p.search("You should take ibuprofen.") for p in patterns)
     assert not any(p.search("The clinic is open until 5pm.") for p in patterns)
+
+
+def test_the_real_tenant_id_reaches_the_policy_decision_log_as_a_top_level_field() -> None:
+    # Previously tenant_id only ever lived nested inside "profile" -- this
+    # confirms it also surfaces as its own top-level log field (which
+    # observability.logging.JSONFormatter actually reads), not just inside
+    # the profile dict.
+    target_logger = logging.getLogger("core.policy_engine")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[assignment]
+    target_logger.addHandler(handler)
+    try:
+        decide_guardrail_profile("tenant-acme", "healthcare")
+    finally:
+        target_logger.removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert decision_records[-1].tenant_id == "tenant-acme"  # type: ignore[attr-defined]

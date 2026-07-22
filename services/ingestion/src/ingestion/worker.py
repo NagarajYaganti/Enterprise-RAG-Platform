@@ -38,14 +38,19 @@ class IngestionSettings(BaseSettings):
 
 
 def _build_chunker(
-    mime_type: str, raw_text: str, structural_elements: list[Any]
+    mime_type: str,
+    raw_text: str,
+    structural_elements: list[Any],
+    tenant_id: str | None = None,
 ) -> tuple[Chunker, str]:
     """ChunkingPolicy replaces the previously-hardcoded StructureAwareChunker
     (verified: it was used for EVERY document regardless of type) -- the
     policy's outcome selects the strategy per docs/RETROFIT-AUDIT.md's
     Phase 1 retrofit plan.
     """
-    outcome = decide_chunking_strategy(mime_type, raw_text, structural_elements)
+    outcome = decide_chunking_strategy(
+        mime_type, raw_text, structural_elements, tenant_id=tenant_id
+    )
     strategy = outcome["strategy"]
     if strategy == "fixed_size":
         chunk_size = outcome.get("chunk_size", 500)
@@ -96,7 +101,28 @@ def process_parsed_document(
     parsed it via its own internal parser_registry, fetching from an
     external source, not our own bucket) -- extracted so sync doesn't
     duplicate the chunking-policy/persistence logic.
+
+    A real, previously-undiscovered gap (caught during a live E2E smoke
+    test, not by any prior unit/integration test): QdrantVectorStore
+    .search/OpenSearchIndex.search's real ACL pre-filter (MatchAny against
+    the acl_principals payload field) never matches an EMPTY acl_principals
+    list -- no principals list a caller passes can ever overlap with
+    nothing. SharePointConnector.fetch() genuinely extracts real ACLs from
+    its source system, so sync-via-SharePoint documents are unaffected. But
+    the plain upload endpoint (POST /v1/documents) has no ACL input
+    mechanism at all, and BlobSourceConnector's source (object storage)
+    genuinely has no per-object ACL concept to extract -- both leave
+    parsed.acl_principals at its real default of []. Left unfixed, this
+    makes every plain-uploaded document permanently unretrievable by any
+    query, a dead end for this platform's single most basic ingestion path.
+    Defaulting to ["public"] here (mirroring the exact sentinel this
+    codebase's own test suite already uses for "visible tenant-wide," e.g.
+    tests/integration/test_retrieval_e2e.py) only ever applies when no real
+    ACL data exists -- a genuine SharePoint ACL list is never overwritten.
     """
+    if not parsed.acl_principals:
+        parsed = parsed.model_copy(update={"acl_principals": ["public"]})
+
     document_repo = DocumentRepository(session)
     chunk_repo = ChunkRepository(session)
 
@@ -124,7 +150,9 @@ def process_parsed_document(
         return document
 
     try:
-        chunker, strategy = _build_chunker(mime_type, parsed.raw_text, parsed.structural_elements)
+        chunker, strategy = _build_chunker(
+            mime_type, parsed.raw_text, parsed.structural_elements, tenant_id=tenant_id
+        )
         chunks = run_pipeline(
             parsed,
             chunker,
@@ -225,7 +253,7 @@ def process_document(
             # primary "can we even handle this?" gate -- an unmapped mime
             # type now resolves gracefully via the policy engine instead of
             # an exception the caller must catch.
-            route_outcome = decide_parser_route(mime_type)
+            route_outcome = decide_parser_route(mime_type, tenant_id=tenant_id)
             if route_outcome["route"] == "unsupported":
                 return _mark_terminal(
                     document_repo,

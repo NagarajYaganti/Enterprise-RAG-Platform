@@ -4,17 +4,17 @@ from typing import TYPE_CHECKING, Any
 
 from arq.connections import RedisSettings
 from connectors.graph.postgres_knowledge_graph import PostgresKnowledgeGraph
+from connectors.keyword.client import get_opensearch_client
 from connectors.keyword.opensearch_index import OpenSearchIndex, ensure_index
 from connectors.postgres.repository import ChunkRepository, DocumentRepository
 from connectors.postgres.session import get_engine, get_sessionmaker
+from connectors.vectorstores.client import get_qdrant_client
 from connectors.vectorstores.migrations import ensure_qdrant_collection
 from connectors.vectorstores.qdrant_store import QdrantVectorStore
 from core.interfaces import EmbeddingProvider, KeywordIndex, KnowledgeGraph, VectorStore
 from core.models import EmbeddingRecord
 from observability.logging import get_json_logger
-from opensearchpy import OpenSearch
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
 from embedding.embedding_policy import decide_embedding_route
@@ -22,6 +22,8 @@ from embedding.queue import EMBED_QUEUE_NAME, get_redis_settings
 
 if TYPE_CHECKING:
     from connectors.graph.spacy_extractor import SpacyEntityExtractor
+    from opensearchpy import OpenSearch
+    from qdrant_client import QdrantClient
 
 logger = get_json_logger(__name__)
 
@@ -39,6 +41,7 @@ def _resolve_embedding_target(
     qdrant_client: "QdrantClient | None",
     opensearch_client: "OpenSearch | None",
     alt_stores: dict[tuple[str, str], tuple[VectorStore, KeywordIndex]],
+    tenant_id: str | None = None,
 ) -> tuple[VectorStore, KeywordIndex]:
     """EmbeddingPolicy (Phase-2 retrofit) routes a chunk to a
     collection/index pair, but this worker process is bound to exactly one
@@ -56,7 +59,7 @@ def _resolve_embedding_target(
     correctly but not yet reachable via retrieval until those services'
     own retrofit loops wire in multi-collection search.
     """
-    outcome = decide_embedding_route(document_mime_type, chunk_language)
+    outcome = decide_embedding_route(document_mime_type, chunk_language, tenant_id=tenant_id)
     route_model_id = outcome["model_id"]
     collection_name = outcome["collection_name"]
     index_name = outcome["index_name"]
@@ -183,6 +186,7 @@ def process_embedding_job(
             qdrant_client,
             opensearch_client,
             alt_stores,
+            tenant_id=tenant_id,
         )
         target_vector_store.upsert(tenant_id, [record])
         target_keyword_index.upsert(tenant_id, [chunk])
@@ -282,7 +286,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     engine = get_engine()
     ctx["session_factory"] = get_sessionmaker(engine)
 
-    qdrant_client = QdrantClient(url="http://localhost:6333")
+    qdrant_client = get_qdrant_client()
     ensure_qdrant_collection(qdrant_client, COLLECTION_NAME, dimension=model["dimensions"])
     ctx["vector_store"] = QdrantVectorStore(qdrant_client, COLLECTION_NAME)
     # Raw client also kept in ctx (Phase-2 retrofit) so process_embedding_job
@@ -290,9 +294,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     # routes elsewhere -- the bound vector_store above stays the default path.
     ctx["qdrant_client"] = qdrant_client
 
-    opensearch_client = OpenSearch(
-        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
-    )
+    opensearch_client = get_opensearch_client()
     ensure_index(opensearch_client, INDEX_NAME)
     ctx["keyword_index"] = OpenSearchIndex(opensearch_client, INDEX_NAME)
     ctx["opensearch_client"] = opensearch_client

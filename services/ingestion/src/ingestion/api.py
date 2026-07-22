@@ -4,21 +4,21 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 
 from connectors.erasure import ErasureError, ErasureService
+from connectors.keyword.client import get_opensearch_client
 from connectors.keyword.opensearch_index import OpenSearchIndex, ensure_index
 from connectors.parser_registry import ParserRegistry
 from connectors.postgres.repository import ChunkRepository, DocumentRepository
 from connectors.postgres.session import get_engine, get_sessionmaker
 from connectors.sources.blob_connector import BlobSourceConnector
+from connectors.vectorstores.client import get_qdrant_client
 from connectors.vectorstores.migrations import ensure_qdrant_collection
 from connectors.vectorstores.qdrant_store import QdrantVectorStore
 from core.model_registry import get_default_embedding_model
 from core.models import Document
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from opensearchpy import OpenSearch
 from orchestrator.semantic_cache import SemanticCache
 from orchestrator.settings import OrchestratorSettings
 from preprocessing.language_detect import LanguageDetector
-from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
 from ingestion.queue import enqueue_parse_job
@@ -161,15 +161,13 @@ def delete_document(
         session.commit()
 
     embedding_model = get_default_embedding_model()
-    qdrant_client = QdrantClient(url="http://localhost:6333")
+    qdrant_client = get_qdrant_client()
     ensure_qdrant_collection(
         qdrant_client, CHUNKS_COLLECTION_NAME, dimension=embedding_model["dimensions"]
     )
     vector_store = QdrantVectorStore(qdrant_client, CHUNKS_COLLECTION_NAME)
 
-    opensearch_client = OpenSearch(
-        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
-    )
+    opensearch_client = get_opensearch_client()
     ensure_index(opensearch_client, CHUNKS_INDEX_NAME)
     keyword_index = OpenSearchIndex(opensearch_client, CHUNKS_INDEX_NAME)
 
@@ -237,15 +235,13 @@ def sync_endpoint(
     )
 
     embedding_model = get_default_embedding_model()
-    qdrant_client = QdrantClient(url="http://localhost:6333")
+    qdrant_client = get_qdrant_client()
     ensure_qdrant_collection(
         qdrant_client, CHUNKS_COLLECTION_NAME, dimension=embedding_model["dimensions"]
     )
     vector_store = QdrantVectorStore(qdrant_client, CHUNKS_COLLECTION_NAME)
 
-    opensearch_client = OpenSearch(
-        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
-    )
+    opensearch_client = get_opensearch_client()
     ensure_index(opensearch_client, CHUNKS_INDEX_NAME)
     keyword_index = OpenSearchIndex(opensearch_client, CHUNKS_INDEX_NAME)
 

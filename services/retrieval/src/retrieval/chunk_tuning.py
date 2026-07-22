@@ -2,20 +2,20 @@ import uuid
 from typing import Any
 
 from connectors.embeddings.sentence_transformers_provider import SentenceTransformersProvider
+from connectors.keyword.client import get_opensearch_client
 from connectors.keyword.opensearch_index import OpenSearchIndex, ensure_index
 from connectors.postgres.repository import ChunkRepository, DocumentRepository
+from connectors.vectorstores.client import get_qdrant_client
 from connectors.vectorstores.migrations import ensure_qdrant_collection
 from connectors.vectorstores.qdrant_store import QdrantVectorStore
 from core.interfaces import Chunker
 from core.models import Document, EmbeddingRecord, ParsedDocument, Query, RetrievalFilters
-from opensearchpy import OpenSearch
 from preprocessing.chunkers.fixed_size import FixedSizeChunker
 from preprocessing.chunkers.structure_aware import StructureAwareChunker
 from preprocessing.chunking_policy import decide_chunking_strategy
 from preprocessing.language_detect import LanguageDetector
 from preprocessing.pipeline import run_pipeline
 from preprocessing.translator_stub import StubTranslator
-from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
 from retrieval.eval import GoldenQuery, run_harness
@@ -37,7 +37,9 @@ def _build_chunker(
     the same directory=tmp_path pattern already used by every other
     policy test since Phase 0.
     """
-    outcome = decide_chunking_strategy(mime_type, raw_text, structural_elements, directory)
+    outcome = decide_chunking_strategy(
+        mime_type, raw_text, structural_elements, directory, tenant_id=TENANT_ID
+    )
     strategy = outcome["strategy"]
     if strategy == "fixed_size":
         chunk_size = outcome.get("chunk_size", 500)
@@ -87,15 +89,13 @@ def evaluate_chunking_variant(
     session: Session = get_sessionmaker(engine)()
 
     embedding_provider = SentenceTransformersProvider(MODEL_ID)
-    qdrant_client = QdrantClient(url="http://localhost:6333")
+    qdrant_client = get_qdrant_client()
     ensure_qdrant_collection(
         qdrant_client, collection_name, dimension=embedding_provider.dimension()
     )
     vector_store = QdrantVectorStore(qdrant_client, collection_name)
 
-    opensearch_client = OpenSearch(
-        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
-    )
+    opensearch_client = get_opensearch_client()
     ensure_index(opensearch_client, index_name)
     keyword_index = OpenSearchIndex(opensearch_client, index_name)
 

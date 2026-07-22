@@ -201,3 +201,42 @@ def test_evaluate_policy_logs_a_fallback_decision() -> None:
     assert record.matched_rule is None  # type: ignore[attr-defined]
     assert record.is_fallback is True  # type: ignore[attr-defined]
     assert record.outcome == FALLBACK  # type: ignore[attr-defined]
+
+
+def test_evaluate_policy_logs_a_real_tenant_id_when_provided() -> None:
+    # observability.logging.JSONFormatter reads a top-level "tenant_id" key
+    # from every log line's `extra` -- confirms a real tenant_id actually
+    # reaches that key (not left nested only inside "profile"), so log
+    # lines are genuinely tenant-correlatable, not always null.
+    handler, records = _attach_capture_handler("core.policy_engine")
+    try:
+        evaluate_policy(
+            "example_policy",
+            profile={"language": "en"},
+            fallback=FALLBACK,
+            directory=FIXTURES_DIR,
+            tenant_id="tenant-acme",
+        )
+    finally:
+        logging.getLogger("core.policy_engine").removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert len(decision_records) == 1
+    assert decision_records[0].tenant_id == "tenant-acme"  # type: ignore[attr-defined]
+
+
+def test_evaluate_policy_logs_tenant_id_none_when_not_provided() -> None:
+    # Unchanged default behavior for every caller that doesn't pass one.
+    handler, records = _attach_capture_handler("core.policy_engine")
+    try:
+        evaluate_policy(
+            "example_policy",
+            profile={"language": "en"},
+            fallback=FALLBACK,
+            directory=FIXTURES_DIR,
+        )
+    finally:
+        logging.getLogger("core.policy_engine").removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert decision_records[0].tenant_id is None  # type: ignore[attr-defined]

@@ -109,7 +109,7 @@ def retrieve(
         query.text, chat_history, deps.llm_provider, deps.llm_model_id, tenant_id
     )
 
-    action = decide_query_strategy(rewritten_text, filters, chat_history)
+    action = decide_query_strategy(rewritten_text, filters, chat_history, tenant_id=tenant_id)
     search_mode = action["search_mode"]
     pool_size = int(settings.candidate_pool_size * action["candidate_pool_multiplier"])
     search_kwargs = to_search_kwargs(filters)
@@ -154,7 +154,9 @@ def retrieve(
         if chunk_id in chunks_by_id
     ]
 
-    rerank_action = decide_rerank_action(compute_rerank_profile([s.score for s in scored_chunks]))
+    rerank_action = decide_rerank_action(
+        compute_rerank_profile([s.score for s in scored_chunks]), tenant_id=tenant_id
+    )
     reranked = False
     if deps.reranker is not None and rerank_action["action"] == "rerank":
         scored_chunks = deps.reranker.rerank(rewritten_text, scored_chunks, top_k)

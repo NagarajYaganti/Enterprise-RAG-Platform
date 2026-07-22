@@ -6,10 +6,12 @@ from connectors.embeddings.sentence_transformers_provider import SentenceTransfo
 from connectors.guardrails.output_policy_guardrail import OutputPolicyGuardrail
 from connectors.guardrails.presidio_guardrail import PresidioGuardrail
 from connectors.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
+from connectors.keyword.client import get_opensearch_client
 from connectors.keyword.opensearch_index import OpenSearchIndex, ensure_index
 from connectors.llm.anthropic_provider import AnthropicProvider
 from connectors.llm.openai_provider import OpenAIChatProvider
 from connectors.rerankers.cross_encoder_reranker import CrossEncoderReranker
+from connectors.vectorstores.client import get_qdrant_client
 from connectors.vectorstores.migrations import ensure_qdrant_collection
 from connectors.vectorstores.qdrant_store import QdrantVectorStore
 from core.interfaces import LLMProvider
@@ -20,9 +22,7 @@ from core.model_registry import (
     get_default_reranker_model,
 )
 from fastapi import FastAPI, Response
-from opensearchpy import OpenSearch
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
-from qdrant_client import QdrantClient
 from retrieval.pipeline import RetrievalDependencies
 from retrieval.settings import RetrievalSettings
 
@@ -46,15 +46,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedding_model = get_default_embedding_model()
     reranker_model = get_default_reranker_model()
 
-    qdrant_client = QdrantClient(url="http://localhost:6333")
+    qdrant_client = get_qdrant_client()
     ensure_qdrant_collection(
         qdrant_client, CHUNKS_COLLECTION_NAME, dimension=embedding_model["dimensions"]
     )
     vector_store = QdrantVectorStore(qdrant_client, CHUNKS_COLLECTION_NAME)
 
-    opensearch_client = OpenSearch(
-        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
-    )
+    opensearch_client = get_opensearch_client()
     ensure_index(opensearch_client, CHUNKS_INDEX_NAME)
     keyword_index = OpenSearchIndex(opensearch_client, CHUNKS_INDEX_NAME)
 
@@ -64,12 +62,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Query rewriting/decomposition (used internally by retrieval.pipeline
     # .retrieve) degrades to a heuristic pass-through without a key
     # configured — same stated behavior as services/retrieval's own main.py.
+    # openai_base_url is optional (Phase-4 addition, only actually wired
+    # here during the E2E smoke test): unset means the real OpenAI API,
+    # unchanged; set means an OpenAI-compatible self-hosted endpoint
+    # (vLLM/Ollama, or a real local stub server), proving the already-built
+    # OpenAIChatProvider.base_url path for real instead of only via a
+    # mocked HTTP response.
     rewrite_llm_provider = None
     rewrite_llm_model_id = ""
     openai_api_key = os.environ.get("OPENAI_API_KEY")
+    openai_base_url = os.environ.get("OPENAI_BASE_URL")
     if openai_api_key:
         rewrite_llm_model = get_default_llm_model(provider="openai")
-        rewrite_llm_provider = OpenAIChatProvider(api_key=openai_api_key)
+        rewrite_llm_provider = OpenAIChatProvider(api_key=openai_api_key, base_url=openai_base_url)
         rewrite_llm_model_id = rewrite_llm_model["id"]
 
     # Generation providers, keyed by provider name — ModelRouter can route
@@ -80,7 +85,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # HTTP 503) if ModelRouter ever routes to a model from a missing one.
     llm_providers: dict[str, LLMProvider] = {}
     if openai_api_key:
-        llm_providers["openai"] = OpenAIChatProvider(api_key=openai_api_key)
+        llm_providers["openai"] = OpenAIChatProvider(
+            api_key=openai_api_key, base_url=openai_base_url
+        )
     anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
     if anthropic_api_key:
         llm_providers["anthropic"] = AnthropicProvider(api_key=anthropic_api_key)

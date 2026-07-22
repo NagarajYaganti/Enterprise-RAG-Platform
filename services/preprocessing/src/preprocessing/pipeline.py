@@ -72,7 +72,7 @@ def run_pipeline(
         # claim about what language the chunk's text is actually written
         # in). This distinction only matters for the implicit path: an
         # explicit request above is the caller's own deliberate choice.
-        action = decide_language_action(language)
+        action = decide_language_action(language, tenant_id=doc.tenant_id)
         candidate_target = action.get("target_language", "en")
         if action["action"] == "translate_then_embed" and language != candidate_target:
             translated = translator.translate(text, language, candidate_target)
@@ -107,8 +107,8 @@ def run_pipeline(
         # OpenSearch analyzer (Phase-2 retrofit, docs/ARCHITECTURE.md's
         # Global-First "analyzer choice is part of LanguagePolicy and
         # logged").
-        chunk.search_analyzer = decide_language_action(chunk.language).get(
-            "analyzer", "standard"
-        )
+        chunk.search_analyzer = decide_language_action(
+            chunk.language, tenant_id=chunk.tenant_id
+        ).get("analyzer", "standard")
 
     return chunks
