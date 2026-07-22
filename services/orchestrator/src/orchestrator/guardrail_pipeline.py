@@ -48,30 +48,34 @@ class GuardrailPipeline:
         self._injection = injection_guardrail
         self._output_policy = output_policy_guardrail
 
-    def check_input(self, text: str) -> GuardrailPipelineResult:
+    def check_input(self, text: str, language: str = "en") -> GuardrailPipelineResult:
         results: list[GuardrailResult] = []
 
-        injection_result = self._injection.check(text, policy="injection")
+        injection_result = self._injection.check(text, policy=f"injection:{language}")
         short_circuit = _apply(injection_result, text, results)
         if short_circuit is not None:
             return short_circuit
 
-        pii_result = self._pii.check(text, policy="pii")
+        pii_result = self._pii.check(text, policy=f"pii:{language}")
         short_circuit = _apply(pii_result, text, results)
         if short_circuit is not None:
             return short_circuit
 
         return GuardrailPipelineResult(passed=True, blocked=False, text=text, results=results)
 
-    def check_output(self, text: str, domain: str) -> GuardrailPipelineResult:
+    def check_output(
+        self, text: str, domain: str, tenant_id: str, language: str = "en"
+    ) -> GuardrailPipelineResult:
         results: list[GuardrailResult] = []
 
-        policy_result = self._output_policy.check(text, policy=f"output_policy:{domain}")
+        policy_result = self._output_policy.check(
+            text, policy=f"output_policy:{tenant_id}:{domain}"
+        )
         short_circuit = _apply(policy_result, text, results)
         if short_circuit is not None:
             return short_circuit
 
-        pii_result = self._pii.check(text, policy="pii")
+        pii_result = self._pii.check(text, policy=f"pii:{language}")
         short_circuit = _apply(pii_result, text, results)
         if short_circuit is not None:
             return short_circuit

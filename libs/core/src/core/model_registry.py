@@ -59,6 +59,21 @@ def get_default_ner_model(path: str | None = None) -> dict[str, Any]:
     raise ModelNotFoundError("no spacy ner model registered in config/models.yaml")
 
 
+def get_ner_models_by_language(path: str | None = None) -> dict[str, str]:
+    """Phase-4 addition (per-locale guardrails): PresidioGuardrail needs a
+    {language: model_id} mapping for every configured spaCy NER model, not
+    just the single default get_default_ner_model returns — model ids are
+    never hardcoded in business logic, so this is the one place that reads
+    them from config/models.yaml for that caller.
+    """
+    result: dict[str, str] = {}
+    for entry in load_models_config(path):
+        if entry.get("task") == "ner" and entry.get("provider") == "spacy":
+            for language in entry.get("languages", []):
+                result[language] = entry["id"]
+    return result
+
+
 def get_default_llm_model(path: str | None = None, provider: str = "openai") -> dict[str, Any]:
     """Unlike embeddings/reranking, no viable free local generation model is
     bundled this phase (stated assumption in the Phase 3 plan — a quality

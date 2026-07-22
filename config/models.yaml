@@ -15,6 +15,8 @@
 #   cost_per_1k_tokens: float | null  # null if not yet verified from a live source
 #   latency_class: str             # e.g. low | medium | high
 #   languages: list[str]
+#   context_window: int | null     # max input tokens; required for generation-task entries
+#                                   # (Phase 4 retrofit, ContextPolicy); null elsewhere
 #   verified_before_deploy: bool   # human has confirmed id/pricing against provider docs
 #   verified_date: str | null      # ISO date of last verification
 #   verified_by: str | null
@@ -28,6 +30,7 @@ models:
     cost_per_1k_tokens: 0.0
     latency_class: low
     languages: ["en"]
+    context_window: null
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -48,6 +51,7 @@ models:
     cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
     latency_class: low
     languages: ["en"]
+    context_window: null
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -60,6 +64,7 @@ models:
     cost_per_1k_tokens: null   # ASSUMPTION: unverified, see note above
     latency_class: low
     languages: ["multilingual"]
+    context_window: null
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -72,6 +77,7 @@ models:
     cost_per_1k_tokens: null   # ASSUMPTION: unverified, see note above
     latency_class: low
     languages: ["multilingual"]
+    context_window: null
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -88,6 +94,7 @@ models:
     cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
     latency_class: low
     languages: ["en"]
+    context_window: null
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -105,6 +112,7 @@ models:
     cost_per_1k_tokens: null   # ASSUMPTION: unverified, see note above
     latency_class: low
     languages: ["multilingual"]
+    context_window: null
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -117,7 +125,9 @@ models:
   # unlike the HuggingFace entries above which came from raw curl JSON.
   # Treat this id and price as LOWER CONFIDENCE than the other entries in
   # this file — a human must re-verify directly against the live page
-  # before deploy, not just re-trust this fetch.
+  # before deploy, not just re-trust this fetch. context_window (1.05M
+  # tokens) came from the same page via the same WebFetch during Phase 4
+  # planning (2026-07-22) — same lower-confidence caveat.
   - id: gpt-5.6-luna
     provider: openai
     task: generation
@@ -126,6 +136,7 @@ models:
     cost_per_1k_tokens: 0.001   # derived from "$1 / Input MTok" ÷ 1000; output price unconfirmed
     latency_class: low
     languages: ["multilingual"]
+    context_window: 1050000
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -143,6 +154,50 @@ models:
     cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
     latency_class: low
     languages: ["en"]
+    context_window: null
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  # Phase-4 retrofit (per-locale guardrails): es/fr/de siblings of
+  # en_core_web_sm above, same source/version (explosion/spacy-models
+  # GitHub releases, 3.8.0) and same pinned-wheel-dependency rationale —
+  # pinned in libs/connectors/pyproject.toml, not a runtime download.
+  - id: es_core_news_sm
+    provider: spacy
+    task: ner
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
+    latency_class: low
+    languages: ["es"]
+    context_window: null
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  - id: fr_core_news_sm
+    provider: spacy
+    task: ner
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
+    latency_class: low
+    languages: ["fr"]
+    context_window: null
+    verified_before_deploy: false
+    verified_date: null
+    verified_by: null
+
+  - id: de_core_news_sm
+    provider: spacy
+    task: ner
+    version: "1"
+    dimensions: null
+    cost_per_1k_tokens: 0.0   # genuinely free — runs locally, no per-token cost
+    latency_class: low
+    languages: ["de"]
+    context_window: null
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -154,6 +209,9 @@ models:
   # human must re-verify directly against the live page before deploy.
   # "The best combination of speed and intelligence" per that page — the
   # general-purpose / higher-capability tier for ModelRouter's "complex" path.
+  # context_window (1M tokens, per that page's "Context window" column for
+  # Claude Sonnet 5) came from the same page, same WebFetch, during Phase 4
+  # planning (2026-07-22) — same lower-confidence caveat.
   - id: claude-sonnet-5
     provider: anthropic
     task: generation
@@ -162,6 +220,7 @@ models:
     cost_per_1k_tokens: 0.003   # from "$3 / input MTok" ÷ 1000; output price ($15/MTok) unconfirmed
     latency_class: medium
     languages: ["multilingual"]
+    context_window: 1000000
     verified_before_deploy: false
     verified_date: null
     verified_by: null
@@ -169,6 +228,8 @@ models:
   # Same source/confidence caveat as claude-sonnet-5 above. "The fastest
   # model with near-frontier intelligence" per that page — the cheap/fast
   # tier for ModelRouter's "simple" path, alongside gpt-5.6-luna.
+  # context_window (200k tokens, per that page's "Context window" column
+  # for Claude Haiku 4.5) came from the same page/fetch, same caveat.
   - id: claude-haiku-4-5
     provider: anthropic
     task: generation
@@ -177,6 +238,7 @@ models:
     cost_per_1k_tokens: 0.001   # from "$1 / input MTok" ÷ 1000; output price ($5/MTok) unconfirmed
     latency_class: low
     languages: ["multilingual"]
+    context_window: 200000
     verified_before_deploy: false
     verified_date: null
     verified_by: null

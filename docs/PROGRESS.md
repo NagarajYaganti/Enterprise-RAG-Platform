@@ -415,6 +415,7 @@ item).
 | `ruff check .` | PASS | `All checks passed!` |
 | `mypy .` | PASS | `Success: no issues found in 232 source files` |
 | Full `pytest -q` | PASS | `549 passed, 35 warnings in 403.86s` |
+| CI workflow runs green on this retrofit's PR | PASS (after one real fix) | PR #11: `test` job initially FAILED in real CI (`relation "documents" does not exist` — see the local/CI divergence bug below); fixed and re-pushed; `gh pr checks 11` → `lint pass`, `typecheck pass`, `test pass` |
 
 **Re-run eval-harness numbers** (same 22-document corpus plus 2 new longer
 documents added for the auto-tuning loop, now 24 documents / 21 golden
@@ -448,8 +449,10 @@ vs. a candidate forcing `chunk_size: 30` on the two new longer documents):
 4. **Chunking auto-tuning loop**: new `services/retrieval/src/retrieval/chunk_tuning.py` — re-chunks eval documents through the real preprocessing pipeline under a candidate `ChunkingPolicy` rule set (a temp-directory replacement, production file never touched), embeds via the real local model into a fresh isolated Qdrant collection + OpenSearch index, runs the real `retrieval.eval` harness, and reports a comparison table — never auto-applied, per the spec's own "proposed as a config diff for human review." `tests/fixtures/eval_corpus/documents.yaml` gained 2 new real, longer, human-authored multi-paragraph documents (doc-23/doc-24) specifically because every pre-existing document is a single short sentence that produces exactly one chunk under any policy variant — not a real proof.
 5. **`RetrievalOutcome`/API response** gained `query_intent`/`reranked` fields, mirroring the existing `rewritten_query` "surface it for API transparency" precedent.
 
-#### A real bug found and fixed during this retrofit
+#### Two real bugs found and fixed during this retrofit
 - **nDCG@5 computed above 1.0** in the chunking auto-tuning loop's own test: when a candidate rule variant splits one document into multiple chunks, several of that document's chunks can appear in the same top-k result set; naively mapping each retrieved chunk back to its parent document_id (for document-level relevance scoring, necessary since chunk ids/boundaries differ per rule variant) let the same document count as a hit at multiple ranks simultaneously, inflating DCG past what IDCG normalizes for. Fixed by deduplicating to one entry per document, first-occurrence rank order, before handing the list to `retrieval.eval.run_harness`. Caught by the auto-tuning loop's own test assertions (`0.0 <= v <= 1.0`), not discovered as a passing-but-wrong result.
+- **A real local/CI divergence, caught by real PR CI, not local runs (PR #11)**: `evaluate_chunking_variant()` opened its own Postgres session directly via `get_engine()`/`get_sessionmaker(engine)()` without ever calling `Base.metadata.create_all(engine)` first. Every local run in this session passed because the sandbox's long-lived Postgres volume already had the `documents`/`chunks` tables from earlier phases' work — but GitHub Actions' fresh-per-run Postgres container had no tables at all, and CI's `test` job failed with `sqlalchemy.exc.ProgrammingError: relation "documents" does not exist`. Fixed by adding the same `Base.metadata.create_all(engine)` call every other session-opening test/module in this codebase already makes (idempotent — a no-op against an existing long-lived volume, a real schema-creation step against a fresh one). Re-verified: `test_chunking_auto_tuning.py` 2/2 passed locally, full suite 549 passed, and the real PR's `test` check turned green on re-run (`gh pr checks 11`).
+**Lesson (matching Phase 1's own "local mypy passed, CI failed" lesson)**: a clean local `pytest` run in this long-lived sandbox is not sufficient evidence a Postgres-touching code path is correct — only a fresh-database environment (a real CI run, not a re-run of the same local session) can catch a missing schema-creation step. Worth checking `docs/PROGRESS.md`'s CI checklist item with real `gh pr checks` output on every phase that touches its own Postgres session, not just trusting the local suite.
 
 #### Stubbed / deferred (intentionally)
 - QueryPolicy's aggregation routing is a BM25-only keyword approximation, not true metadata aggregation (COUNT/GROUP BY) — no SQL/analytics engine exists in this codebase; building one is out of scope for this retrofit, same size class as Phase 4's deferred agentic-loop item.
@@ -509,6 +512,77 @@ vs. a candidate forcing `chunk_size: 30` on the two new longer documents):
 - The `httpx2`/Starlette deprecation warning is real (see bug list above) and currently non-blocking, but could become a hard requirement in a future Starlette release — if `TestClient`-based tests ever start failing after a Starlette upgrade, re-add `httpx2` as a correctly-scoped, correctly-justified dependency at that point.
 - This sandbox's Docker containers reliably exit between idle periods/session boundaries — always run `docker compose -f infra/docker-compose.dev.yml ps` and restart with a health-check wait before assuming infra-dependent tests will pass.
 - `uv sync --all-packages` from a cold cache has, twice now across this project's history, filled this sandbox's disk during the sync itself — still not solved with a proper CI/sandbox-level fix (e.g., a pre-flight disk-space check), only a manual runbook discipline (clean caches immediately after every full sync).
+
+### Retrofit (2026-07-22) — Semantic-cache security fix, ModelRouter/GuardrailProfile/CachePolicy/ContextPolicy, per-locale guardrails, response-language handling
+
+`docs/RETROFIT-AUDIT.md` found Phase 4 to be the largest-scope phase in the
+retrofit: a live cross-user semantic-cache leak (keyed on `tenant_id` only,
+not `principals`) in already-merged code, three still-hardcoded/absent
+policies (`GuardrailProfile`, `ContextPolicy`, and `ModelRouter`'s
+non-compliant raise-instead-of-fallback behavior), `CachePolicy` newly
+unblocked now that Phase 3's `QueryPolicy` exists, and two Global-First gaps
+(no response-language handling, no per-locale guardrails). This retrofit
+closes all 7. `PromptPolicy`'s automatic type/domain selection — also named
+in the audit and also newly unblocked by `QueryPolicy` — was a deliberate,
+stated scope exclusion from the approved plan, not an oversight; it remains
+open for a future pass (see `docs/RETROFIT-AUDIT.md`).
+
+**Doc correction made during this retrofit**: `docs/RETROFIT-AUDIT.md`'s
+Phase 4 row for "semantic cache TTL + invalidation" said
+`invalidate_for_document()` was never called anywhere — that was true when
+the audit was written (2026-07-21), but Phase 2's own retrofit, landed the
+same day, already closed it via the `DELETE /v1/documents/{id}` erasure
+hook. Nothing needed building for that row; the audit doc itself has now
+been corrected.
+
+**User-confirmed scope decision (translation coverage)**: response-language
+handling and per-locale guardrails needed real, non-fabricated non-English
+content (translated refusal text, translated injection-detection phrases).
+Real, hand-verified coverage for Spanish/French/German only; every other
+detected language (Arabic, Chinese, Hindi, Japanese, Portuguese) honestly
+falls back to English content, disclosed as a stated limitation rather than
+guessed or machine-translated filler. The underlying mechanism is fully
+general — more languages can be added later once verified translations
+exist, with no code changes beyond adding dictionary entries and pinning
+the matching spaCy model.
+
+#### Exit checklist results
+| Item | Result | Evidence |
+|---|---|---|
+| Two different principal-sets in the same tenant never see each other's cached semantic-cache answers | PASS | `test_semantic_cache.py::test_get_is_principal_isolated`, `test_get_matches_when_any_shared_principal_overlaps` |
+| `ModelRouter` never raises when no candidate fits a `generation` task; falls back to the real configured default, logged as `is_fallback=True` | PASS | `test_model_router.py::test_no_generation_model_fits_budget_falls_back_to_the_real_default`, `test_fallback_selection_is_logged_as_is_fallback_true`; every other task still raises `ModelNotFoundError`, a disclosed, deliberate boundary |
+| `GuardrailProfile`: healthcare's real patterns still block after moving to config; an unlisted domain's fallback still blocks nothing | PASS | `test_guardrail_profile.py` (4 tests), `test_output_policy_guardrail.py` (updated + new 2/3-segment policy-string tests) |
+| A real Spanish/French/German injection attempt and PII string are each detected by the per-locale guardrails; an unrecognized language falls back to English, disclosed | PASS | `test_per_locale_guardrails.py` (5 real end-to-end tests, no fakes), `test_presidio_guardrail.py` (real es/fr/de PII redaction), `test_prompt_injection_guardrail.py` (real es/fr/de injection detection) |
+| A non-English query with no answer in the corpus gets a real translated (es/fr/de) or honestly-English-fallback refusal sentence | PASS | `test_pipeline.py::test_orchestrate_returns_a_real_spanish_refusal_when_no_chunks_retrieved`, `test_orchestrate_falls_back_to_english_refusal_for_an_unsupported_language`; `test_prompt_registry.py`'s new `refusal_text_for`/`language_name_for` tests |
+| `CachePolicy`: a comparison-intent query never uses the cache; a factual-intent query uses a tighter similarity threshold | PASS | `test_cache_policy.py` (4 tests), `test_pipeline.py::test_orchestrate_uses_a_tighter_threshold_for_a_factual_intent_query`, `test_orchestrate_never_looks_up_the_cache_for_a_comparison_intent_query`, `test_orchestrate_never_caches_a_comparison_intent_answer` |
+| `ContextPolicy`: a real token-budget case truncates lowest-scored chunks; exact-duplicate chunks are deduped | PASS | `test_context_policy.py` (8 tests, real token-budget math via `preprocessing.tokenization.count_tokens`), `test_pipeline.py::test_orchestrate_dedupes_exact_duplicate_chunk_text_in_the_rendered_prompt` |
+| `docs/RETROFIT-AUDIT.md`'s stale "invalidation never wired" row is corrected to reflect Phase 2's real `DELETE`-endpoint wiring | PASS | see doc correction note above |
+| `ruff check .` | PASS | `All checks passed!` |
+| `mypy .` | PASS | `Success: no issues found in 239 source files` |
+| Full `pytest -q` | PASS | `598 passed, 35 warnings in 408.68s` |
+
+#### Done
+1. **Semantic-cache principal-keying fix** (security-critical): `SemanticCache.get`/`.put` both gained a mandatory `principals: list[str]` param; `get()`'s Qdrant filter adds `FieldCondition(key="principals", match=MatchAny(any=principals))`, the same ACL pre-filter pattern already proven in `QdrantVectorStore.search`. `get()` also gained an optional per-call `similarity_threshold` override, reused by item 6 below.
+2. **`ModelRouter` hardening**: sort direction (cost-desc for `complex` queries, cost-asc otherwise — the one genuine strategy choice) now comes from new `config/policies/model_router.yaml` via `evaluate_policy`; candidate filtering (language/budget match over the dynamic `config/models.yaml` list) stays real Python, stated explicitly as out of the policy engine's profile→fixed-outcome scope. Falls back to `get_default_llm_model()` (logged `is_fallback=True`) instead of raising when nothing fits — scoped strictly to `task="generation"` (the only task that function can safely resolve); every other task still raises `ModelNotFoundError`.
+3. **`GuardrailProfile`**: new `libs/connectors/src/connectors/guardrails/guardrail_profile.py` + `config/policies/guardrail_profile.yaml`. `OutputPolicyGuardrail`'s old hardcoded `DOMAIN_POLICIES` dict is gone; its healthcare patterns migrated verbatim into a `domain: {eq: "healthcare"}` rule. `check()` now resolves `tenant_id`+`domain` from an extended `"output_policy:<tenant_id>:<domain>"` policy string (backward-compatible with the older 2-segment/no-segment forms). Mechanism supports per-tenant rules; no real per-tenant data exists yet, disclosed rather than fabricated.
+4. **Per-locale guardrails**: `PresidioGuardrail` now accepts `languages`/`language_models` (default `["en"]`, model ids resolved from `config/models.yaml` via new `core.model_registry.get_ner_models_by_language()` — never a hardcoded dict, matching CLAUDE.md's model-registry rule); real, verified `es_core_news_sm`/`fr_core_news_sm`/`de_core_news_sm` spaCy 3.8.0 wheels pinned in `libs/connectors/pyproject.toml`. `PromptInjectionGuardrail` gained real, hand-verified Spanish/French/German translations of its 6 English patterns. Both resolve the requested language from a `"pii:<language>"`/`"injection:<language>"` policy-string suffix, defaulting to English when unrecognized. `GuardrailPipeline.check_input`/`check_output` gained a `language` param; `main.py` constructs `PresidioGuardrail(languages=["en","es","fr","de"])`.
+5. **Response-language handling**: `orchestrate()` now detects the query's actual language via `preprocessing.language_detect.LanguageDetector` (shared dependency with item 4, module-level singleton mirroring Phase 3 `QueryPolicy`'s own pattern) — distinct from the pre-existing caller-supplied `language` request field (still used for model routing/template selection, unchanged). Every `retrieval-qa` template gained a "Respond in {target_language}." instruction line; `core.prompt_registry` gained `TRANSLATED_REFUSAL_TEXT`/`refusal_text_for()` (real es/fr/de translations, English fallback) and `LANGUAGE_DISPLAY_NAMES`/`language_name_for()`. `citations.py`'s internal grounding check and the cache-skip check keep comparing against the canonical English `REFUSAL_TEXT` unchanged — only the final `answer_text` is swapped to the translated sentence right before returning.
+6. **`CachePolicy`**: new `services/orchestrator/src/orchestrator/cache_policy.py` + `config/policies/cache.yaml` — `factual` intent tightens the threshold to 0.97; `comparison` (this codebase's closest real reasoning-heavy intent) disables the cache entirely; every other intent keeps the caller's own `OrchestratorSettings.cache_similarity_threshold`, never a duplicated literal. Wired into `orchestrate()`'s existing `outcome.query_intent` (already available before the cache lookup runs, no reordering needed).
+7. **`ContextPolicy`**: `config/models.yaml`'s 3 generation entries gained a real `context_window` field (`gpt-5.6-luna`: 1.05M, `claude-sonnet-5`: 1M, `claude-haiku-4-5`: 200k — all via `WebFetch` against the same official pages already cited for these entries' ids/pricing, same lower-confidence caveat). New `services/orchestrator/src/orchestrator/context_policy.py` + `config/policies/context.yaml`: the policy decides one genuine strategy choice (`token_budget_fraction: 0.5`, reserving half the window for the prompt/completion); real Python computes the actual token budget and applies dedupe + score-ordered truncation (lowest-scored chunks dropped first once the running total would exceed the budget). A model with no known `context_window` falls back to today's real unconstrained behavior (still deduped). Replaces `pipeline.py`'s naive `"\n\n".join(...)` context assembly.
+
+#### Real bugs found and fixed during this retrofit
+- **A missed call site from this retrofit's own item 1**: after adding the mandatory `principals` param to `SemanticCache.put()`, a full-repo `mypy .` run (not caught by the narrower per-item runs during execution) surfaced `tests/unit/services/ingestion/test_api.py:219` still calling `.put()` with the old, pre-retrofit signature. Fixed by adding `principals=["p1"]`; re-ran `mypy .` clean, full suite still green. A reminder that a narrow-scope test run during active development is not a substitute for a full-repo check before considering an item done — consistent with this project's repeated "local success isn't full proof" lesson, just caught by `mypy` this time instead of a fresh-environment CI run.
+
+#### Stubbed / deferred (intentionally)
+- `PromptPolicy`'s automatic `type`/`domain` template selection (still caller-supplied, not derived from `QueryPolicy`'s intent classification) — explicitly excluded from this retrofit's approved plan, not an oversight; `docs/RETROFIT-AUDIT.md` marks it still open.
+- Per-locale guardrail coverage is real but bounded: Presidio's NER and the injection pattern set only have verified models/translations for en/es/fr/de; every other language `LanguageDetector` can recognize (pt/hi/ar/zh/ja) or fails to recognize (`"unknown"`) falls back to the English model/pattern set — a disclosed limitation (a PII string or injection attempt phrased in one of those languages' own script/wording may not be reliably caught), not a silent gap.
+- Response-language translated refusal text is real but bounded the same way: only es/fr/de have hand-verified translations; every other language gets the honest English `REFUSAL_TEXT` fallback. The "Respond in {target_language}." prompt instruction itself is NOT bounded this way — it names a real language for all 9 `LanguageDetector`-supported codes (falling back to "English" only for a genuinely undetectable query), since asking an LLM to respond in a named language is a much lower-stakes ask than hand-verifying a translated sentence.
+- `ContextPolicy`'s `token_budget_fraction: 0.5` is a stated, disclosed engineering choice (reserve half the window for prompt/completion), not derived from a live source or tuned against eval-harness evidence — consistent with `RerankPolicy`/`QueryPolicy`'s own precedent of hand-authored starting points.
+
+#### Known risks / watch items
+- `gpt-5.6-luna`/`claude-sonnet-5`/`claude-haiku-4-5`'s new `context_window` values came from the same `WebFetch`-sourced pages already flagged lower-confidence for these entries' ids/pricing (WebFetch summarizes through an intermediate model) — a human must re-verify directly against the live pages before deploy, same caveat as the pre-existing fields.
+- `ContextPolicy`'s truncation stops entirely at the first chunk that would exceed the budget (rather than skipping it and trying smaller later chunks) — simple and deterministic, but means a single chunk larger than the entire budget produces an empty context block. Not expected to occur in practice given these models' hundred-thousand-plus-token windows versus this codebase's ~500-token chunk sizes, but not defended against explicitly.
+- `decide_context_strategy`/`compute_context_profile` call `get_model_entry(model_id)` a second time per request (the routed model's provider was already resolved once earlier in `orchestrate()`) — a minor, non-hot-path inefficiency (an extra YAML read + linear scan), not a correctness issue.
 
 ### Top 3 priorities for Phase 5
 1. Replace `core.middleware.TenantContextMiddleware`'s explicitly-flagged **INSECURE STUB** (unsigned bearer token, no signature verification — its own docstring already names Phase 5 as the fix) with real OIDC/JWT validation across all five services that currently import it.

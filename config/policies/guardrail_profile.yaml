@@ -1,0 +1,24 @@
+policy: guardrail_profile
+version: "1"
+rules:
+  # Migrated verbatim from the old hardcoded
+  # connectors.guardrails.output_policy_guardrail.DOMAIN_POLICIES dict --
+  # same real patterns, same real behavior for this one domain, now
+  # config-driven instead of compiled into the class (Phase-4 retrofit,
+  # docs/RETROFIT-AUDIT.md's GuardrailProfile finding: "the literal
+  # anti-pattern the spec names"). No tenant-specific rule is authored yet
+  # (no real per-tenant policy data exists) -- the mechanism supports one
+  # (a rule keyed on tenant_id AND domain together would win by
+  # first-match-wins), stated here rather than silently absent.
+  - name: healthcare_default
+    when:
+      domain: { eq: "healthcare" }
+    then:
+      forbidden_phrase_patterns:
+        - '\byou should take\b'
+        - '\bi recommend (this|the following) (medication|dosage|treatment)\b'
+        - '\bdiagnos(e|is)\b'
+fallback:
+  # Every other domain: nothing blocked, matching today's real
+  # DOMAIN_POLICIES.get(domain, []) default.
+  forbidden_phrase_patterns: []

@@ -1,0 +1,12 @@
+policy: model_router
+version: "1"
+rules:
+  - name: complex_prefers_most_capable
+    when:
+      complexity: { eq: "complex" }
+    then:
+      sort: cost_desc
+fallback:
+  # Today's real default: "simple" (and any other complexity value) prefers
+  # the cheapest fit within budget.
+  sort: cost_asc

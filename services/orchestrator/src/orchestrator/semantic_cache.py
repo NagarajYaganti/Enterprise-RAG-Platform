@@ -50,11 +50,34 @@ class SemanticCache:
         self._similarity_threshold = similarity_threshold
         self._ttl_seconds = ttl_seconds
 
-    def get(self, tenant_id: str, query_vector: list[float]) -> SemanticCacheHit | None:
+    def get(
+        self,
+        tenant_id: str,
+        principals: list[str],
+        query_vector: list[float],
+        similarity_threshold: float | None = None,
+    ) -> SemanticCacheHit | None:
+        """`principals` is mandatory, matching the same ACL pre-filter
+        discipline QdrantVectorStore.search already enforces for chunk
+        search (MatchAny against a list-valued payload field) -- keying
+        only on tenant_id let two different users in the same tenant see
+        each other's cached answers, including ones grounded in documents
+        one of them has no access to (Phase-4 retrofit: a real, previously
+        shipped cross-user leak, docs/RETROFIT-AUDIT.md's Phase 4 finding).
+
+        `similarity_threshold` overrides the instance-bound default for
+        this one call (CachePolicy, Phase-4 retrofit) -- None means use
+        the value this instance was constructed with, unchanged behavior
+        for every caller that doesn't pass one.
+        """
+        threshold = (
+            similarity_threshold if similarity_threshold is not None else self._similarity_threshold
+        )
         not_before = datetime.now(timezone.utc) - timedelta(seconds=self._ttl_seconds)
         query_filter = Filter(
             must=[
                 FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+                FieldCondition(key="principals", match=MatchAny(any=principals)),
                 FieldCondition(key="created_at", range=DatetimeRange(gte=not_before)),
             ]
         )
@@ -65,7 +88,7 @@ class SemanticCache:
             return None
 
         point = result.points[0]
-        if point.score < self._similarity_threshold:
+        if point.score < threshold:
             return None
 
         payload = point.payload or {}
@@ -80,6 +103,7 @@ class SemanticCache:
     def put(
         self,
         tenant_id: str,
+        principals: list[str],
         query_id: str,
         query_vector: list[float],
         answer_text: str,
@@ -92,6 +116,7 @@ class SemanticCache:
             vector=query_vector,
             payload={
                 "tenant_id": tenant_id,
+                "principals": principals,
                 "answer_text": answer_text,
                 "document_ids": document_ids,
                 "cited_chunk_ids": cited_chunk_ids,

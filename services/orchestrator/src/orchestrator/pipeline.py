@@ -6,14 +6,22 @@ from connectors.postgres.repository import TokenUsageRepository
 from core.interfaces import EmbeddingProvider, LLMProvider, ModelRouter
 from core.model_registry import get_model_entry
 from core.models import ChatTurn, GuardrailResult, Query, RetrievalFilters, TokenUsageRecord
-from core.prompt_registry import REFUSAL_TEXT, get_prompt_template
+from core.prompt_registry import (
+    REFUSAL_TEXT,
+    get_prompt_template,
+    language_name_for,
+    refusal_text_for,
+)
+from preprocessing.language_detect import LanguageDetector
 from retrieval.pipeline import RetrievalDependencies, retrieve
 from retrieval.query_understanding import decompose_query
 from retrieval.settings import RetrievalSettings
 from sqlalchemy.orm import Session
 
+from orchestrator.cache_policy import decide_cache_strategy
 from orchestrator.citations import check_citations
 from orchestrator.complexity import assess_complexity
+from orchestrator.context_policy import build_context_block, decide_context_strategy
 from orchestrator.guardrail_pipeline import GuardrailPipeline
 from orchestrator.semantic_cache import SemanticCache
 from orchestrator.settings import OrchestratorSettings
@@ -22,6 +30,17 @@ from orchestrator.settings import OrchestratorSettings
 # guardrail hard-blocks (injection, output policy, an internal guardrail
 # failure), which are a different situation from "the docs don't say."
 BLOCKED_RESPONSE_TEXT = "This request could not be processed."
+
+# Phase-4 retrofit (per-locale guardrails): the caller-supplied `language`
+# param below is only used for model routing/prompt-template selection and
+# often just defaults to "en" whether or not the request actually is —
+# guardrails instead use the query's ACTUALLY DETECTED language, reusing
+# Phase 3 QueryPolicy's same LanguageDetector dependency. detect() returns
+# "unknown" or an unsupported code (e.g. "zh") for anything outside
+# PresidioGuardrail/PromptInjectionGuardrail's configured {en, es, fr, de}
+# — both already fall back to "en" internally for any language they don't
+# recognize, a disclosed limitation, not a silent gap.
+_language_detector = LanguageDetector()
 
 
 class LLMProviderNotConfiguredError(RuntimeError):
@@ -98,7 +117,8 @@ def orchestrate(
     follow its own refusal instruction when hallucination is exactly the
     failure mode being guarded against.
     """
-    input_check = deps.guardrail_pipeline.check_input(query.text)
+    detected_language = _language_detector.detect(query.text)
+    input_check = deps.guardrail_pipeline.check_input(query.text, language=detected_language)
     if input_check.blocked:
         return OrchestrationResult(
             query_id=query.id,
@@ -130,7 +150,7 @@ def orchestrate(
         return OrchestrationResult(
             query_id=query.id,
             rewritten_query=rewritten_query,
-            answer_text=REFUSAL_TEXT,
+            answer_text=refusal_text_for(detected_language),
             cited_chunk_ids=[],
             model_id=None,
             from_cache=False,
@@ -142,16 +162,29 @@ def orchestrate(
         budget if budget is not None else orchestrator_settings.default_budget_cost_per_1k_tokens
     )
 
+    cache_action = decide_cache_strategy(
+        outcome.query_intent, orchestrator_settings.cache_similarity_threshold
+    )
+
     cache_vector: list[float] | None = None
     cache_hit = None
-    cache_active = orchestrator_settings.semantic_cache_enabled and deps.semantic_cache is not None
+    cache_active = (
+        orchestrator_settings.semantic_cache_enabled
+        and deps.semantic_cache is not None
+        and cache_action["cache_enabled"]
+    )
     if cache_active:
         assert deps.cache_embedding_provider is not None  # implied by cache_active
         cache_vector = deps.cache_embedding_provider.embed(
             [rewritten_query], deps.cache_embedding_model_id
         )[0]
         assert deps.semantic_cache is not None
-        cache_hit = deps.semantic_cache.get(query.tenant_id, cache_vector)
+        cache_hit = deps.semantic_cache.get(
+            query.tenant_id,
+            principals,
+            cache_vector,
+            similarity_threshold=cache_action["similarity_threshold"],
+        )
 
     # A cache hit is a previously-cached answer that ALREADY passed citation
     # validation and output guardrails before it was stored (see the `put`
@@ -195,9 +228,14 @@ def orchestrate(
             f"(routed to model_id={model_id!r})"
         )
 
-    context_block = "\n\n".join(f"[{sc.chunk.id}] {sc.chunk.text}" for sc in retrieved_chunks)
+    context_strategy = decide_context_strategy(model_id, retrieved_chunks)
+    context_block = build_context_block(retrieved_chunks, context_strategy)
     template = get_prompt_template(type="retrieval-qa", domain=domain, language=language)
-    prompt_text = template.template_text.format(context=context_block, query=rewritten_query)
+    prompt_text = template.template_text.format(
+        context=context_block,
+        query=rewritten_query,
+        target_language=language_name_for(detected_language),
+    )
 
     completion = provider.generate(
         [{"role": "user", "content": prompt_text}], model_id, {"tenant_id": query.tenant_id}
@@ -222,7 +260,9 @@ def orchestrate(
         answer_text = REFUSAL_TEXT
         cited_chunk_ids = []
 
-    output_check = deps.guardrail_pipeline.check_output(answer_text, domain)
+    output_check = deps.guardrail_pipeline.check_output(
+        answer_text, domain, query.tenant_id, language=detected_language
+    )
     if output_check.blocked:
         return OrchestrationResult(
             query_id=query.id,
@@ -243,9 +283,18 @@ def orchestrate(
             {sc.chunk.document_id for sc in retrieved_chunks if sc.chunk.id in cited_chunk_ids}
         )
         deps.semantic_cache.put(
-            query.tenant_id, str(uuid4()), cache_vector, answer_text, document_ids,
+            query.tenant_id, principals, str(uuid4()), cache_vector, answer_text, document_ids,
             cited_chunk_ids, model_id,
         )
+
+    # Translate the refusal sentence only now, for the returned value —
+    # every internal comparison above (citations.py's grounding check, the
+    # cache-skip check just above) must keep comparing against the
+    # canonical English REFUSAL_TEXT, since that's the single source of
+    # truth those checks were built against, unaffected by
+    # response-language handling.
+    if answer_text == REFUSAL_TEXT:
+        answer_text = refusal_text_for(detected_language)
 
     return OrchestrationResult(
         query_id=query.id,

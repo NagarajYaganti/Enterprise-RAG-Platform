@@ -17,7 +17,6 @@ from core.middleware import TenantContextMiddleware
 from core.model_registry import (
     get_default_embedding_model,
     get_default_llm_model,
-    get_default_ner_model,
     get_default_reranker_model,
 )
 from fastapi import FastAPI, Response
@@ -46,7 +45,6 @@ CACHE_COLLECTION_NAME = "semantic_cache"
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedding_model = get_default_embedding_model()
     reranker_model = get_default_reranker_model()
-    ner_model = get_default_ner_model()
 
     qdrant_client = QdrantClient(url="http://localhost:6333")
     ensure_qdrant_collection(
@@ -102,7 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     guardrail_pipeline = GuardrailPipeline(
-        pii_guardrail=PresidioGuardrail(model_id=ner_model["id"]),
+        pii_guardrail=PresidioGuardrail(languages=["en", "es", "fr", "de"]),
         injection_guardrail=PromptInjectionGuardrail(),
         output_policy_guardrail=OutputPolicyGuardrail(),
     )

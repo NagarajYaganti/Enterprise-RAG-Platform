@@ -23,10 +23,13 @@ def test_budget_excludes_models_over_the_ceiling() -> None:
     assert model_id == "gpt-5.6-luna"
 
 
-def test_no_model_fits_budget_raises_model_not_found_error() -> None:
+def test_no_generation_model_fits_budget_falls_back_to_the_real_default() -> None:
+    # Phase-4 retrofit: the Adaptive Policy Pattern's "never fail the
+    # request over strategy selection" -- no candidate fits, so this falls
+    # back to get_default_llm_model() rather than raising.
     router = ConfigModelRouter()
-    with pytest.raises(ModelNotFoundError):
-        router.select(task="generation", language="en", complexity="simple", budget=0.0005)
+    model_id = router.select(task="generation", language="en", complexity="simple", budget=0.0005)
+    assert model_id == "gpt-5.6-luna"
 
 
 def test_multilingual_entries_match_any_requested_language() -> None:
@@ -73,3 +76,23 @@ def test_select_emits_structured_routing_decision_log() -> None:
     assert record.complexity == "simple"  # type: ignore[attr-defined]
     assert record.budget == 0.01  # type: ignore[attr-defined]
     assert "claude-sonnet-5" in record.candidates_considered  # type: ignore[attr-defined]
+    assert record.is_fallback is False  # type: ignore[attr-defined]
+
+
+def test_fallback_selection_is_logged_as_is_fallback_true() -> None:
+    target_logger = logging.getLogger("orchestrator.model_router")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[assignment]
+    target_logger.addHandler(handler)
+    try:
+        router = ConfigModelRouter()
+        router.select(task="generation", language="en", complexity="simple", budget=0.0005)
+    finally:
+        target_logger.removeHandler(handler)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.model_id == "gpt-5.6-luna"  # type: ignore[attr-defined]
+    assert record.is_fallback is True  # type: ignore[attr-defined]
+    assert record.candidates_considered == []  # type: ignore[attr-defined]
