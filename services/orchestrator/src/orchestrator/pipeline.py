@@ -163,7 +163,9 @@ def orchestrate(
     )
 
     cache_action = decide_cache_strategy(
-        outcome.query_intent, orchestrator_settings.cache_similarity_threshold
+        outcome.query_intent,
+        orchestrator_settings.cache_similarity_threshold,
+        tenant_id=query.tenant_id,
     )
 
     cache_vector: list[float] | None = None
@@ -228,7 +230,9 @@ def orchestrate(
             f"(routed to model_id={model_id!r})"
         )
 
-    context_strategy = decide_context_strategy(model_id, retrieved_chunks)
+    context_strategy = decide_context_strategy(
+        model_id, retrieved_chunks, tenant_id=query.tenant_id
+    )
     context_block = build_context_block(retrieved_chunks, context_strategy)
     template = get_prompt_template(type="retrieval-qa", domain=domain, language=language)
     prompt_text = template.template_text.format(

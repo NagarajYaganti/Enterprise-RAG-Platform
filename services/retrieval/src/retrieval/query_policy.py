@@ -43,9 +43,10 @@ def decide_query_strategy(
     filters: RetrievalFilters,
     chat_history: list[ChatTurn],
     directory: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     profile = compute_query_profile(query_text, filters, chat_history)
-    decision = evaluate_policy("query", profile, FALLBACK_OUTCOME, directory)
+    decision = evaluate_policy("query", profile, FALLBACK_OUTCOME, directory, tenant_id)
     return decision.outcome
 
 

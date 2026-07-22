@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from core.models import Chunk, ScoredChunk
@@ -106,3 +107,18 @@ def test_build_context_block_includes_everything_when_budget_is_none() -> None:
 
     for i in range(20):
         assert f"[c{i}]" in result
+
+
+def test_a_real_tenant_id_reaches_the_policy_decision_log() -> None:
+    target_logger = logging.getLogger("core.policy_engine")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[assignment]
+    target_logger.addHandler(handler)
+    try:
+        decide_context_strategy("claude-haiku-4-5", [], tenant_id="tenant-acme")
+    finally:
+        target_logger.removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert decision_records[-1].tenant_id == "tenant-acme"  # type: ignore[attr-defined]

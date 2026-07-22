@@ -589,6 +589,74 @@ the matching spaCy model.
 2. OWASP LLM Top 10 (2025) control mapping (GAP-MATRIX row) — Phase 4 built several of the individual controls (guardrails, citation grounding, agent permission gates) but nothing yet documents them against the named OWASP framework the way enterprise security reviews expect.
 3. GDPR erasure/retention/data residency + EU AI Act governance record (GAP-MATRIX row, flagged as an enterprise procurement blocker) — no per-tenant data-retention or right-to-erasure mechanism exists yet anywhere in the platform.
 
+## Cross-phase end-to-end smoke test (2026-07-22)
+
+Phases 0-4's retrofit work was verified only at the unit/integration-test
+level until this pass — every test either mocked infra, used FastAPI's
+in-process `TestClient`, or exercised one service's code in isolation.
+Nothing had ever started the 5 real services + 2 `arq` workers as separate
+OS processes against a real running docker-compose stack and traced a real
+document upload through to a real cited answer. This session did exactly
+that. Full commands, real policy-decision logs, and real persistence
+evidence: **`docs/E2E-SMOKE.md`**.
+
+**4 real, previously-undiscovered gaps were found and fixed** (none caught
+by the existing test suite, because none of it had ever exercised a live
+stack before):
+1. Qdrant/OpenSearch client URLs were hardcoded literals in 6 places, not
+   environment-configurable — new `connectors.vectorstores.client`
+   (`QDRANT_URL`) and `connectors.keyword.client` (`OPENSEARCH_HOST`/
+   `OPENSEARCH_PORT`), mirroring `connectors.postgres.session`'s existing
+   `DatabaseSettings` pattern.
+2. `tenant_id` was never actually populated on any log line —
+   `JSONFormatter` already read a top-level `tenant_id` key, but no
+   `evaluate_policy()` call site ever passed it via `extra`.
+   `evaluate_policy()` and 9 of 10 `decide_*()` policy wrappers gained an
+   optional `tenant_id` param; `ModelRouter`'s call site is the one
+   deliberate exception (its fixed core-ABC signature has no tenant_id
+   slot), logging `tenant_id: null`, disclosed not silently gapped.
+3. No scanned-PDF fixture existed to exercise the `unstructured` library's
+   own internal image-only-PDF/OCR fallback (distinct from the existing
+   raw-PNG OCR-route fixture). New `generate_scanned_pdf()`
+   (`tests/fixtures/scripts/generate_fixtures.py`) — real, genuinely
+   image-only. Along the way, found `poppler-utils` (`pdftoppm`/`pdfinfo`)
+   was missing from this sandbox (a real system-dependency gap for this
+   path); installed, confirmed real OCR extraction end-to-end.
+4. **The most serious**: `POST /v1/documents` (the plain upload endpoint)
+   never set any ACL principal, leaving every directly-uploaded document's
+   `acl_principals` at `[]` — and Qdrant/OpenSearch's real ACL pre-filter
+   (`MatchAny`) can never match an empty list. Every plain-uploaded document
+   was **permanently unretrievable by any query**, a dead end for this
+   platform's single most basic ingestion path. Fixed by defaulting to
+   `["public"]` in `ingestion.worker.process_parsed_document` whenever no
+   real ACL data exists (a genuine SharePoint-sourced ACL is never
+   overwritten).
+
+All 4 fixes: `ruff check .` clean, `mypy .` clean (244 files), full
+`pytest -q` — 617 passed, re-verified multiple times across this session.
+
+**Known limitations disclosed, not fixed in this pass** (see
+`docs/E2E-SMOKE.md`'s closing section for full detail): `services/gateway`
+has zero real request routing (a bare health/metrics stub; a user-confirmed
+scope decision to defer real reverse-proxy routing to Phase 5, not a Phase
+0-4 wiring fix); `PromptPolicy`'s automatic template selection remains
+unbuilt (`summarization`/`reasoning`/`structured-output` templates exist but
+no real endpoint ever selects them — an already-known, now additionally
+confirmed-live gap); `QueryPolicy`'s aggregation-keyword matching is
+substring-based, not word-boundary-based (a real, newly live-caught false
+positive — "summary" matches the "sum" keyword — a pre-existing Phase 3
+characteristic, not introduced here, left untuned per the Adaptive Policy
+Pattern's own "extend only when eval-harness evidence justifies it" rule).
+
+**A real methodological lesson, not a platform defect**: running the full
+automated `pytest` suite concurrently with the live E2E session against the
+same real Postgres/Qdrant/OpenSearch/Redis instances caused the live `arq`
+workers to race the test suite's own job-queue consumption, and several
+tests' own per-test cleanup fixtures wiped the live trace's shared
+Postgres/Qdrant/OpenSearch state mid-session. Worked around by stopping the
+live workers before any `pytest` run — a real caution for anyone running
+this platform's test suite and a live demo against the same infra at once.
+
 ## Phase 5 — API gateway, auth & multi-tenant security
 (not started)
 

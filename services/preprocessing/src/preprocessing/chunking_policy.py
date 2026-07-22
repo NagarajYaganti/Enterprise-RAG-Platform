@@ -43,7 +43,8 @@ def decide_chunking_strategy(
     raw_text: str,
     structural_elements: list[dict[str, Any]],
     directory: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     profile = compute_chunking_profile(mime_type, raw_text, structural_elements)
-    decision = evaluate_policy("chunking", profile, FALLBACK_OUTCOME, directory)
+    decision = evaluate_policy("chunking", profile, FALLBACK_OUTCOME, directory, tenant_id)
     return decision.outcome

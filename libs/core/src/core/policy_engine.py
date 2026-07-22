@@ -71,6 +71,7 @@ def evaluate_policy(
     profile: dict[str, Any],
     fallback: dict[str, Any],
     directory: str | None = None,
+    tenant_id: str | None = None,
 ) -> PolicyDecision:
     """profile -> first matching rule (file order) from
     config/policies/<policy_name>.yaml -> PolicyDecision. A missing rules
@@ -79,6 +80,13 @@ def evaluate_policy(
     raising — the Adaptive Policy Pattern's "never fail the request over
     strategy selection" rule (docs/ARCHITECTURE.md). Every call, matched or
     fallback, is logged for auditability.
+
+    `tenant_id` is optional and purely for log correlation — it's surfaced
+    as its own top-level `extra` key (which `observability.logging
+    .JSONFormatter` already reads on every log line) rather than folded
+    into `profile`, since not every caller has a real tenant_id available
+    (e.g. eval/tuning tooling) and `profile` is also used for rule matching,
+    which tenant_id here is not.
     """
     matched_rule: str | None = None
     outcome = fallback
@@ -96,7 +104,7 @@ def evaluate_policy(
     except Exception:
         logger.exception(
             "policy_engine.rule_evaluation_error",
-            extra={"policy_name": policy_name, "profile": profile},
+            extra={"policy_name": policy_name, "profile": profile, "tenant_id": tenant_id},
         )
         matched_rule = None
         outcome = fallback
@@ -117,6 +125,7 @@ def evaluate_policy(
             "matched_rule": matched_rule,
             "outcome": outcome,
             "is_fallback": is_fallback,
+            "tenant_id": tenant_id,
         },
     )
     return decision

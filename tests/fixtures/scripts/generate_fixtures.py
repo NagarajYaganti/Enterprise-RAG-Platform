@@ -28,6 +28,7 @@ XLSX_ROW = ["widget-a", 42, 1050]
 HTML_HEADING = "Onboarding Runbook"
 HTML_BODY = "Follow these steps to onboard a new enterprise tenant."
 OCR_TEXT = "INVOICE NUMBER 48213"
+SCANNED_PDF_TEXT = "PURCHASE ORDER 77042"
 STT_TEXT = "the quarterly earnings call starts at nine a m eastern time"
 EML_SUBJECT = "Contract renewal reminder"
 EML_BODY = "Please review the attached renewal terms before Friday."
@@ -100,6 +101,25 @@ def generate_ocr_image() -> None:
     )
     draw.text((10, 30), OCR_TEXT, fill="black", font=font)
     img.save(str(OUTPUT_DIR / "sample_ocr.png"))
+
+
+def generate_scanned_pdf() -> None:
+    # A genuinely image-only PDF -- no embedded text layer at all. Pillow
+    # renders the text onto a raster image, then saves that image directly
+    # as a single-page PDF, exactly the shape a real flatbed-scanned
+    # document has. Distinct from sample_ocr.png (a raw PNG, exercising
+    # ParserPolicy's separate images_via_ocr mime-type route): this exists
+    # to exercise the unstructured-library PDF route's OWN internal
+    # image-only-PDF/OCR fallback, invisible to ParserPolicy itself (which
+    # routes every application/pdf, native or scanned, to the same
+    # "unstructured" route -- see libs/connectors/parser_policy.py).
+    img = Image.new("RGB", (600, 150), color="white")
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype(
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size=28
+    )
+    draw.text((10, 50), SCANNED_PDF_TEXT, fill="black", font=font)
+    img.save(str(OUTPUT_DIR / "sample_scanned.pdf"), "PDF")
 
 
 def generate_audio() -> None:
@@ -178,6 +198,7 @@ if __name__ == "__main__":
     generate_xlsx()
     generate_html()
     generate_ocr_image()
+    generate_scanned_pdf()
     generate_audio()
     generate_eml()
     generate_encrypted_pdf()

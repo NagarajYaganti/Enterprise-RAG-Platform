@@ -22,6 +22,8 @@ def compute_rerank_profile(fused_scores: list[float]) -> dict[str, Any]:
     return {"top1_score": top1, "margin": margin}
 
 
-def decide_rerank_action(profile: dict[str, Any], directory: str | None = None) -> dict[str, Any]:
-    decision = evaluate_policy("rerank", profile, FALLBACK_OUTCOME, directory)
+def decide_rerank_action(
+    profile: dict[str, Any], directory: str | None = None, tenant_id: str | None = None
+) -> dict[str, Any]:
+    decision = evaluate_policy("rerank", profile, FALLBACK_OUTCOME, directory, tenant_id)
     return decision.outcome

@@ -22,7 +22,10 @@ def compute_context_profile(model_id: str, chunks: list[ScoredChunk]) -> dict[st
 
 
 def decide_context_strategy(
-    model_id: str, chunks: list[ScoredChunk], directory: str | None = None
+    model_id: str,
+    chunks: list[ScoredChunk],
+    directory: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """The policy engine decides the one genuine strategy choice --
     token_budget_fraction, how much of the model's real context window to
@@ -37,7 +40,7 @@ def decide_context_strategy(
     context_window.
     """
     profile = compute_context_profile(model_id, chunks)
-    decision = evaluate_policy("context", profile, FALLBACK_OUTCOME, directory)
+    decision = evaluate_policy("context", profile, FALLBACK_OUTCOME, directory, tenant_id)
     outcome = decision.outcome
 
     token_budget: int | None = None

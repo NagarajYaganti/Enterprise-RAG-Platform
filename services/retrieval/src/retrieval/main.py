@@ -3,9 +3,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from connectors.embeddings.sentence_transformers_provider import SentenceTransformersProvider
+from connectors.keyword.client import get_opensearch_client
 from connectors.keyword.opensearch_index import OpenSearchIndex, ensure_index
 from connectors.llm.openai_provider import OpenAIChatProvider
 from connectors.rerankers.cross_encoder_reranker import CrossEncoderReranker
+from connectors.vectorstores.client import get_qdrant_client
 from connectors.vectorstores.migrations import ensure_qdrant_collection
 from connectors.vectorstores.qdrant_store import QdrantVectorStore
 from core.middleware import TenantContextMiddleware
@@ -16,9 +18,7 @@ from core.model_registry import (
     get_default_reranker_model,
 )
 from fastapi import FastAPI, Response
-from opensearchpy import OpenSearch
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
-from qdrant_client import QdrantClient
 
 from retrieval.api import router
 from retrieval.pipeline import RetrievalDependencies
@@ -37,15 +37,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedding_model = get_default_embedding_model()
     reranker_model = get_default_reranker_model()
 
-    qdrant_client = QdrantClient(url="http://localhost:6333")
+    qdrant_client = get_qdrant_client()
     ensure_qdrant_collection(
         qdrant_client, COLLECTION_NAME, dimension=embedding_model["dimensions"]
     )
     vector_store = QdrantVectorStore(qdrant_client, COLLECTION_NAME)
 
-    opensearch_client = OpenSearch(
-        hosts=[{"host": "localhost", "port": 9200}], use_ssl=False, verify_certs=False
-    )
+    opensearch_client = get_opensearch_client()
     ensure_index(opensearch_client, INDEX_NAME)
     keyword_index = OpenSearchIndex(opensearch_client, INDEX_NAME)
 
@@ -59,13 +57,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Query rewriting/decomposition degrades to a heuristic pass-through
     # without a real key configured — stated explicitly in the Phase 3 plan,
-    # not a silent failure.
+    # not a silent failure. openai_base_url is optional (Phase-4 addition,
+    # only actually wired here during the E2E smoke test): unset means the
+    # real OpenAI API, unchanged; set means an OpenAI-compatible self-hosted
+    # endpoint (vLLM/Ollama, or a real local stub server), proving the
+    # already-built OpenAIChatProvider.base_url path for real instead of
+    # only via a mocked HTTP response.
     llm_provider = None
     llm_model_id = ""
     openai_api_key = os.environ.get("OPENAI_API_KEY")
+    openai_base_url = os.environ.get("OPENAI_BASE_URL")
     if openai_api_key:
         llm_model = get_default_llm_model()
-        llm_provider = OpenAIChatProvider(api_key=openai_api_key)
+        llm_provider = OpenAIChatProvider(api_key=openai_api_key, base_url=openai_base_url)
         llm_model_id = llm_model["id"]
 
     settings = RetrievalSettings()

@@ -26,7 +26,10 @@ def compute_embedding_profile(mime_type: str, language: str) -> dict[str, Any]:
 
 
 def decide_embedding_route(
-    mime_type: str, language: str, directory: str | None = None
+    mime_type: str,
+    language: str,
+    directory: str | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Routes a chunk to an embedding model + collection/index pair.
 
@@ -45,5 +48,5 @@ def decide_embedding_route(
         "index_name": "chunks",
     }
     profile = compute_embedding_profile(mime_type, language)
-    decision = evaluate_policy("embedding", profile, fallback, directory)
+    decision = evaluate_policy("embedding", profile, fallback, directory, tenant_id)
     return decision.outcome

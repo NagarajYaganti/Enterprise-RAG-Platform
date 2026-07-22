@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -69,3 +70,20 @@ def test_decompose_if_needed_falls_back_without_llm_even_when_policy_says_yes() 
         "compare a and b", {"decompose": True}, None, "gpt-5.6-luna", "tenant-acme"
     )
     assert result == ["compare a and b"]
+
+
+def test_a_real_tenant_id_reaches_the_policy_decision_log() -> None:
+    target_logger = logging.getLogger("core.policy_engine")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[assignment]
+    target_logger.addHandler(handler)
+    try:
+        decide_query_strategy(
+            "what is the refund window", RetrievalFilters(), [], tenant_id="tenant-acme"
+        )
+    finally:
+        target_logger.removeHandler(handler)
+
+    decision_records = [r for r in records if r.getMessage() == "policy_engine.decision"]
+    assert decision_records[-1].tenant_id == "tenant-acme"  # type: ignore[attr-defined]
