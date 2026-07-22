@@ -376,6 +376,90 @@ Full suite: `uv run pytest -v` → `298 passed, 24 warnings in 231.54s`. `uv run
 - The small eval corpus (22 docs) is good enough to prove the mechanics (hybrid fusion, reranking, filters) work correctly, but is not large enough to make strong, generalizable claims about retrieval quality at production scale — Phase 6's eval harness work should grow this substantially.
 - The disk/OpenSearch flood-stage-watermark risk documented in Phase 2's PROGRESS.md recurred here too (99% disk usage immediately after the CI-matched `.venv` rebuild) — this time anticipated and cleared proactively (`uv cache clean`) *before* running the exit checklist rather than discovered as a mid-run failure, confirming the documented runbook step is the right fix. Still worth solving properly (e.g., a disk-space check step in CI) rather than continuing to rely on remembering this note.
 
+### Retrofit (2026-07-21) — QueryPolicy, RerankPolicy, chunking auto-tuning loop
+`docs/RETROFIT-AUDIT.md` found 3 gaps in Phase 3 against the updated spec:
+no `QueryPolicy` (`retrieval.pipeline.retrieve()` always ran the identical
+hybrid vector+BM25 path for every query, regardless of intent), no
+`RerankPolicy` (the reranker either always ran or never ran, no margin-
+based adaptive skip), and the chunking auto-tuning loop (correctly blocked
+on Phase 1's `ChunkingPolicy`, now built and merged). This retrofit closes
+all 3, built on Phase 0's `core.policy_engine` and Phase 1's `ChunkingPolicy`.
+
+**A real wiring gap found during planning, not in the original audit
+table**: `retrieval.query_understanding.decompose_query()` existed and was
+unit-tested in isolation since Phase 3's original build, but
+`pipeline.retrieve()` never called it — the same "built and tested, never
+wired into the real flow" pattern Phase 1 found for `SourceConnector` and
+Phase 2 found for `ErasureService`. Closed as part of QueryPolicy's wiring.
+
+**User-confirmed scope decision (aggregation intent)**: the spec's
+"aggregations should NOT hit vector search... route to a metadata-store
+query mode" has no real metadata-aggregation/analytics engine to route to
+anywhere in this codebase. QueryPolicy correctly classifies aggregation
+intent and routes it to BM25-only search over filtered chunks — honest,
+immediately useful for count-ish keyword queries, explicitly documented as
+NOT true metadata aggregation. Building a real aggregation engine is out
+of scope for this retrofit (comparable to Phase 4's deferred agentic-loop
+item).
+
+#### Exit checklist results (new items, since the original Phase 3 checklist predates these requirements)
+| Item | Result | Evidence |
+|---|---|---|
+| An aggregation-style query never calls vector search (BM25-only), disclosed as a keyword approximation | PASS | `test_retrieve_aggregation_query_never_calls_vector_search` |
+| A comparison-style query triggers `decompose_query()` for real, sub-question hits present in the fused pool | PASS | `test_retrieve_comparison_query_decomposes_and_fuses_sub_question_hits` |
+| Multi-hop only fires when both the global setting AND QueryPolicy agree | PASS | `test_retrieve_multi_hop_issues_a_second_search_pass_when_enabled`, `test_retrieve_multi_hop_disabled_by_default_issues_only_one_search_pass` |
+| RerankPolicy: a well-separated result set skips reranking even with a reranker configured; a narrow-margin one still reranks | PASS | `test_retrieve_skips_reranking_when_scores_are_well_separated`, `test_retrieve_reranks_when_scores_are_narrowly_separated` |
+| QueryPolicy/RerankPolicy: every rule + fallback tested, decisions logged via Phase 0's `policy_engine` | PASS | `test_query_policy.py` (7 tests), `test_rerank_policy.py` (5 tests) |
+| Chunking auto-tuning loop produces measurably different metrics across two real rule variants on a real (extended) eval corpus | PASS | `test_chunking_auto_tuning.py` — a real bug (nDCG@5 computed as 1.186, >1.0) was caught and fixed here, see below |
+| Full eval-harness numbers re-run and recorded with the new wiring active | PASS | see numbers below |
+| `ruff check .` | PASS | `All checks passed!` |
+| `mypy .` | PASS | `Success: no issues found in 232 source files` |
+| Full `pytest -q` | PASS | `549 passed, 35 warnings in 403.86s` |
+
+**Re-run eval-harness numbers** (same 22-document corpus plus 2 new longer
+documents added for the auto-tuning loop, now 24 documents / 21 golden
+queries, with QueryPolicy/RerankPolicy actively running against every
+query):
+
+| Method | recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| Vector-only | 1.000 | 0.952 | 0.965 |
+| BM25-only | 0.905 | 0.881 | 0.887 |
+| Hybrid (RRF) | 1.000 | 0.914 | 0.936 |
+
+Reranker effect (nDCG@10): Hybrid (no rerank) 0.919 → Hybrid + reranker
+0.965 — both claims from Phase 3's original exit checklist still hold with
+the new policy wiring active. p95 latency: 867ms this run (shared-sandbox
+variance already documented as a known risk since Phase 3's original
+close; not a new regression).
+
+**Chunking auto-tuning report** (baseline `config/policies/chunking.yaml`
+vs. a candidate forcing `chunk_size: 30` on the two new longer documents):
+
+| Variant | recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| baseline (chunk_size=500) | 1.000 | 0.952 | 0.965 |
+| small_chunk_size (chunk_size=30) | 1.000 | 0.976 | 0.982 |
+
+#### Done
+1. **`QueryPolicy`**: new `services/retrieval/src/retrieval/query_policy.py` + `config/policies/query.yaml` — cheap-signal profile (query length, aggregation/comparison keywords, filters/history presence, detected language) routes to `search_mode` (`hybrid`/`bm25_only`), `decompose`, and `multi_hop`. Wired into `pipeline.retrieve()`: `bm25_only` skips the vector-search call entirely; `decompose: true` calls the previously-unwired `decompose_query()`, fusing each sub-question's hits into the candidate pool (the same "search again, then fuse" shape multi-hop's own expansion pass already used); `multi_hop` from the policy is ANDed with the existing global `settings.multi_hop_enabled` flag (global stays a hard off-switch, policy decides per-query within that ceiling); `candidate_pool_multiplier` scales `candidate_pool_size` per query without touching the caller-controlled `top_k` contract.
+2. **`RerankPolicy`**: new `services/retrieval/src/retrieval/rerank_policy.py` + `config/policies/rerank.yaml` — margin (`top1_score - top2_score` on RRF-fused scores) below a stated, disclosed threshold (a fraction of RRF's own max single-list contribution at k=60) skips reranking even when a reranker is configured; a well-separated top result would leave rerank as a wasted cost otherwise.
+3. **Wired `decompose_query`**: folded into `QueryPolicy`'s `retrieve()` changes above (see the wiring-gap note).
+4. **Chunking auto-tuning loop**: new `services/retrieval/src/retrieval/chunk_tuning.py` — re-chunks eval documents through the real preprocessing pipeline under a candidate `ChunkingPolicy` rule set (a temp-directory replacement, production file never touched), embeds via the real local model into a fresh isolated Qdrant collection + OpenSearch index, runs the real `retrieval.eval` harness, and reports a comparison table — never auto-applied, per the spec's own "proposed as a config diff for human review." `tests/fixtures/eval_corpus/documents.yaml` gained 2 new real, longer, human-authored multi-paragraph documents (doc-23/doc-24) specifically because every pre-existing document is a single short sentence that produces exactly one chunk under any policy variant — not a real proof.
+5. **`RetrievalOutcome`/API response** gained `query_intent`/`reranked` fields, mirroring the existing `rewritten_query` "surface it for API transparency" precedent.
+
+#### A real bug found and fixed during this retrofit
+- **nDCG@5 computed above 1.0** in the chunking auto-tuning loop's own test: when a candidate rule variant splits one document into multiple chunks, several of that document's chunks can appear in the same top-k result set; naively mapping each retrieved chunk back to its parent document_id (for document-level relevance scoring, necessary since chunk ids/boundaries differ per rule variant) let the same document count as a hit at multiple ranks simultaneously, inflating DCG past what IDCG normalizes for. Fixed by deduplicating to one entry per document, first-occurrence rank order, before handing the list to `retrieval.eval.run_harness`. Caught by the auto-tuning loop's own test assertions (`0.0 <= v <= 1.0`), not discovered as a passing-but-wrong result.
+
+#### Stubbed / deferred (intentionally)
+- QueryPolicy's aggregation routing is a BM25-only keyword approximation, not true metadata aggregation (COUNT/GROUP BY) — no SQL/analytics engine exists in this codebase; building one is out of scope for this retrofit, same size class as Phase 4's deferred agentic-loop item.
+- `RerankPolicy`'s margin threshold and `QueryPolicy`'s keyword lists are hand-authored starting points, not yet tuned against eval-harness evidence — consistent with the Adaptive Policy Pattern's own stated rule, not claimed optimal.
+- The chunking auto-tuning loop reports a comparison table; it does not itself write `config/policies/chunking.yaml` — a human must apply any winning variant as a real config diff, per the spec's explicit instruction.
+
+#### Known risks / watch items
+- Some existing golden queries (e.g. "What was the average emergency room wait time?") contain QueryPolicy's aggregation keywords ("average") and now route to BM25-only instead of hybrid — a real, disclosed side effect of adding intent classification; the eval-harness numbers above already reflect this live, and the original exit checklist's claims still hold with it active.
+- `evaluate_chunking_variant` opens its own short-lived Postgres session and constructs a fresh local embedding model per trial — fine at this eval corpus's small scale (24 documents), but would need pooling/reuse if the auto-tuning loop is ever run against a much larger corpus.
+
 ### Top 3 priorities for Phase 4
 1. `LLMProvider`/`ModelRouter`/`Guardrail` are the last 3 of the 8 fixed core ABCs still needing production wiring beyond this phase's narrow query-rewrite use of `OpenAIChatProvider` — Phase 4 is where `assemble_prompt → route_model → generate → guardrails` (the second half of `docs/ARCHITECTURE.md`'s fixed data flow) gets built for real, with grounded citations and refuse-when-absent behavior (GAP-MATRIX's primary hallucination control).
 2. Semantic cache (tenant+principal keyed) — GAP-MATRIX explicitly warns naive caches are a cross-user leak channel; this needs the same tenant/ACL pre-filter discipline already proven for Qdrant/OpenSearch in Phases 2–3.

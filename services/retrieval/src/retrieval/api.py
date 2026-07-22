@@ -62,6 +62,8 @@ class ScoredChunkResponse(BaseModel):
 class RetrieveResponse(BaseModel):
     query_id: str
     rewritten_query: str
+    query_intent: str
+    reranked: bool
     chunks: list[ScoredChunkResponse]
 
 
@@ -110,6 +112,8 @@ def retrieve_endpoint(
     return RetrieveResponse(
         query_id=outcome.result.query_id,
         rewritten_query=outcome.rewritten_query,
+        query_intent=outcome.query_intent,
+        reranked=outcome.reranked,
         chunks=[
             ScoredChunkResponse(
                 chunk_id=scored_chunk.chunk.id,

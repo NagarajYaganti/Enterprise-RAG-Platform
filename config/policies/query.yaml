@@ -1,0 +1,49 @@
+policy: query
+version: "1"
+rules:
+  - name: aggregation
+    when:
+      has_aggregation_keywords: { eq: true }
+    then:
+      # "aggregations should NOT hit vector search" (Section 4 Phase 3) --
+      # routed to BM25-only over filtered chunks. Disclosed limitation:
+      # this is a keyword-search approximation, not true metadata
+      # aggregation (COUNT/GROUP BY) -- no SQL/analytics engine exists in
+      # this codebase. Building one is out of scope for this retrofit.
+      intent: aggregation
+      search_mode: bm25_only
+      candidate_pool_multiplier: 1.0
+      decompose: false
+      multi_hop: false
+  - name: comparison
+    when:
+      has_comparison_keywords: { eq: true }
+    then:
+      # A comparison question is often compound ("compare X and Y")
+      # -- decomposing into "about X" / "about Y" gives each side its own
+      # real retrieval pass instead of one blended, muddier search.
+      intent: comparison
+      search_mode: hybrid
+      candidate_pool_multiplier: 1.5
+      decompose: true
+      multi_hop: false
+  - name: follow_up
+    when:
+      has_history: { eq: true }
+      query_length: { lte: 6 }
+    then:
+      # A short query with prior conversation turns often only makes
+      # sense via the entities/terms multi-hop's expansion pass surfaces
+      # from the first-pass results.
+      intent: follow_up
+      search_mode: hybrid
+      candidate_pool_multiplier: 1.0
+      decompose: false
+      multi_hop: true
+fallback:
+  # Today's real, unchanged default behavior for the common case.
+  intent: factual
+  search_mode: hybrid
+  candidate_pool_multiplier: 1.0
+  decompose: false
+  multi_hop: false

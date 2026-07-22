@@ -171,3 +171,50 @@ documents:
     department: operations
     language: en
     date: "2026-05-20"
+
+  # doc-23/doc-24: real, longer, multi-paragraph documents (Phase-3
+  # retrofit, chunking auto-tuning loop). Every document above this line
+  # is short single-sentence text -- under ANY ChunkingPolicy rule variant
+  # every one of them still produces exactly one chunk (a ~15-word
+  # sentence never approaches even a small fixed_size chunk_size
+  # boundary), so the auto-tuning loop would have nothing real to compare.
+  # These two are long enough that a small fixed_size chunk_size genuinely
+  # splits them into multiple chunks, unlike the production default.
+  - id: doc-23
+    text: >-
+      Loan Servicing Policy. All active loan accounts must be reviewed by a
+      servicing officer on a monthly basis to confirm payment status and
+      escalate any accounts more than fifteen days past due. Application
+      Review. Every new loan application is screened for completeness
+      within two business days of submission, checking identity
+      verification, income documentation, and requested loan amount against
+      the applicant's stated purpose. Approval Criteria. A loan may only be
+      approved if the applicant's debt-to-income ratio is below forty
+      three percent and their credit score meets the minimum threshold for
+      the requested loan product. Appeals Process. An applicant whose loan
+      is denied may request a manual reconsideration within thirty days of
+      the denial notice, during which a senior underwriter re-reviews the
+      full application file.
+    doc_type: policy
+    department: lending
+    language: en
+    date: "2026-06-01"
+
+  - id: doc-24
+    text: >-
+      Clinical Intake Procedure. Every new patient must complete a full
+      intake packet, including insurance verification and a medical
+      history questionnaire, before their first appointment is scheduled.
+      Triage Assessment. A licensed nurse reviews each intake packet within
+      one business day to flag any symptoms that require expedited
+      scheduling rather than the standard appointment queue. Consent
+      Documentation. Written consent for treatment must be signed and filed
+      before any clinical service is rendered, and a copy must be provided
+      to the patient for their own records. Follow-Up Scheduling. Patients
+      requiring ongoing care are scheduled for a follow-up visit at
+      intervals set by the treating clinician, not to exceed ninety days
+      between visits for chronic condition management.
+    doc_type: policy
+    department: clinical
+    language: en
+    date: "2026-06-05"

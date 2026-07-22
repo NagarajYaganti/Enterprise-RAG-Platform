@@ -1,0 +1,16 @@
+policy: rerank
+version: "1"
+rules:
+  - name: confident_and_separated
+    when:
+      # Reciprocal Rank Fusion (k=60): a single rank-1 hit contributes at
+      # most 1/(60+1) ~= 0.0164 to a chunk's fused score. This threshold
+      # (half of that) is a stated, disclosed starting value -- flagged
+      # for eval-harness tuning like every other policy's rules, not
+      # claimed optimal.
+      margin: { gte: 0.008 }
+    then:
+      action: skip
+fallback:
+  # Today's real default: always rerank when a reranker is configured.
+  action: rerank
