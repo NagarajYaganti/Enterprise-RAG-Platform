@@ -90,23 +90,27 @@ def test_check_output_hard_blocks_on_domain_policy_violation() -> None:
         output_policy_guardrail=_hard_block("output_policy:healthcare", "OUTPUT_POLICY_VIOLATION"),
     )
 
-    result = pipeline.check_output("You should take 500mg twice daily.", domain="healthcare")
+    result = pipeline.check_output(
+        "You should take 500mg twice daily.", domain="healthcare", tenant_id="tenant-acme"
+    )
 
     assert result.passed is False
     assert result.blocked is True
 
 
-def test_check_output_passes_domain_arg_through_as_scoped_policy_string() -> None:
-    output_policy = _passing("output_policy:healthcare")
+def test_check_output_passes_domain_and_tenant_through_as_scoped_policy_string() -> None:
+    output_policy = _passing("output_policy:tenant-acme:healthcare")
     pipeline = GuardrailPipeline(
         pii_guardrail=_passing("pii"),
         injection_guardrail=_passing("injection"),
         output_policy_guardrail=output_policy,
     )
 
-    pipeline.check_output("Some answer text.", domain="healthcare")
+    pipeline.check_output("Some answer text.", domain="healthcare", tenant_id="tenant-acme")
 
-    assert output_policy.calls == [("Some answer text.", "output_policy:healthcare")]
+    assert output_policy.calls == [
+        ("Some answer text.", "output_policy:tenant-acme:healthcare")
+    ]
 
 
 def test_check_output_redacts_pii_leaked_from_source_documents() -> None:
@@ -116,11 +120,56 @@ def test_check_output_redacts_pii_leaked_from_source_documents() -> None:
         output_policy_guardrail=_passing("output_policy:retail"),
     )
 
-    result = pipeline.check_output("Contact jane@example.com for details.", domain="retail")
+    result = pipeline.check_output(
+        "Contact jane@example.com for details.", domain="retail", tenant_id="tenant-acme"
+    )
 
     assert result.passed is False
     assert result.blocked is False
     assert result.text == "Contact <REDACTED> for details."
+
+
+def test_check_input_threads_the_language_into_injection_and_pii_policies() -> None:
+    injection = _passing("injection:es")
+    pii = _passing("pii:es")
+    pipeline = GuardrailPipeline(
+        pii_guardrail=pii,
+        injection_guardrail=injection,
+        output_policy_guardrail=_passing("output_policy:bfsi"),
+    )
+
+    pipeline.check_input("¿Cuál es la política de reembolso?", language="es")
+
+    assert injection.calls == [("¿Cuál es la política de reembolso?", "injection:es")]
+    assert pii.calls == [("¿Cuál es la política de reembolso?", "pii:es")]
+
+
+def test_check_output_threads_the_language_into_the_pii_policy() -> None:
+    pii = _passing("pii:fr")
+    pipeline = GuardrailPipeline(
+        pii_guardrail=pii,
+        injection_guardrail=_passing("injection"),
+        output_policy_guardrail=_passing("output_policy:tenant-acme:retail"),
+    )
+
+    pipeline.check_output(
+        "Contactez jane@example.com.", domain="retail", tenant_id="tenant-acme", language="fr"
+    )
+
+    assert pii.calls == [("Contactez jane@example.com.", "pii:fr")]
+
+
+def test_check_input_defaults_language_to_en_when_not_specified() -> None:
+    injection = _passing("injection:en")
+    pipeline = GuardrailPipeline(
+        pii_guardrail=_passing("pii:en"),
+        injection_guardrail=injection,
+        output_policy_guardrail=_passing("output_policy:bfsi"),
+    )
+
+    pipeline.check_input("What is the refund window?")
+
+    assert injection.calls == [("What is the refund window?", "injection:en")]
 
 
 def test_guardrail_check_failure_is_a_hard_block_fail_closed() -> None:

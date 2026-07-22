@@ -1,0 +1,34 @@
+policy: cache
+version: "1"
+rules:
+  # Factual lookups are the case semantic caching benefits most (repeated,
+  # near-identical questions) and are least likely to need fresh reasoning
+  # per call -- a tighter threshold than today's real 0.95 default reduces
+  # false-positive cache hits (Phase-4 retrofit, docs/RETROFIT-AUDIT.md's
+  # CachePolicy finding).
+  - name: factual_tighter_threshold
+    when:
+      query_intent: { eq: "factual" }
+    then:
+      cache_enabled: true
+      similarity_threshold: 0.97
+  # Comparison queries are this codebase's closest real reasoning-heavy
+  # intent (Phase 3 QueryPolicy) -- the master spec's literal "cache
+  # disabled for reasoning-heavy intents." Caching a comparison answer
+  # risks serving a stale conclusion once the underlying documents change,
+  # a materially worse failure mode than a cache miss.
+  - name: comparison_cache_disabled
+    when:
+      query_intent: { eq: "comparison" }
+    then:
+      cache_enabled: false
+      similarity_threshold: 0.95
+# Every other intent (e.g. "aggregation"): today's real behavior, unchanged
+# -- see orchestrator.cache_policy.decide_cache_strategy's own fallback,
+# which uses the caller's actual OrchestratorSettings.cache_similarity_
+# threshold rather than a second hardcoded copy of it here. This file's own
+# fallback block is documentation only -- never read by the policy engine
+# (see libs/core/src/core/policy_engine.py).
+fallback:
+  cache_enabled: true
+  similarity_threshold: 0.95

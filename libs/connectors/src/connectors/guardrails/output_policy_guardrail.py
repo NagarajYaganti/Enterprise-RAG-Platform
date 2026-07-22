@@ -1,38 +1,41 @@
-import re
-
 from core.interfaces import Guardrail
 from core.models import GuardrailResult
 
-# Per-domain forbidden-phrase policies — config-driven per domain, not
-# scattered hardcoded checks through the pipeline. Healthcare's "no medical
-# advice beyond source documents" instruction (Section 4 Phase 4 task text)
-# is enforced here as a pattern check on the OUTPUT, defense-in-depth beyond
-# the prompt instruction itself. New domains/patterns extend this dict, not
-# the class.
-DOMAIN_POLICIES: dict[str, list[re.Pattern[str]]] = {
-    "healthcare": [
-        re.compile(r"\byou should take\b", re.IGNORECASE),
-        re.compile(
-            r"\bi recommend (this|the following) (medication|dosage|treatment)\b", re.IGNORECASE
-        ),
-        re.compile(r"\bdiagnos(e|is)\b", re.IGNORECASE),
-    ],
-}
+from connectors.guardrails.guardrail_profile import compiled_patterns
+
+
+def _parse_policy(policy: str) -> tuple[str, str]:
+    """policy is "output_policy:<tenant_id>:<domain>" (Phase-4 retrofit,
+    GuardrailProfile) -- tolerant of the older 2-segment
+    "output_policy:<domain>" form (tenant_id="") and the no-segment
+    "output_policy" form (both tenant_id and domain "") so existing
+    callers that don't know about tenant scoping yet still resolve to a
+    real (tenant-agnostic) domain policy rather than erroring.
+    """
+    parts = policy.split(":")
+    if len(parts) >= 3:
+        return parts[1], parts[2]
+    if len(parts) == 2:
+        return "", parts[1]
+    return "", ""
 
 
 class OutputPolicyGuardrail(Guardrail):
-    """policy is expected in "output_policy:<domain>" form (e.g.
-    "output_policy:healthcare") — the domain segment selects which pattern
-    set from DOMAIN_POLICIES applies. Like PromptInjectionGuardrail, a
+    """policy is expected in "output_policy:<tenant_id>:<domain>" form
+    (e.g. "output_policy:tenant-acme:healthcare") -- the domain (and,
+    once real per-tenant policy data exists, the tenant) segment selects
+    which forbidden-phrase pattern set applies, resolved via
+    GuardrailProfile (config/policies/guardrail_profile.yaml) instead of
+    a hardcoded DOMAIN_POLICIES dict. Like PromptInjectionGuardrail, a
     violation has no sensible auto-redaction — passed=False is always a
     hard block here. Fails closed on internal errors.
     """
 
     def check(self, payload: str, policy: str) -> GuardrailResult:
-        domain = policy.split(":", 1)[1] if ":" in policy else ""
-        patterns = DOMAIN_POLICIES.get(domain, [])
+        tenant_id, domain = _parse_policy(policy)
 
         try:
+            patterns = compiled_patterns(tenant_id, domain)
             matched = any(pattern.search(payload) for pattern in patterns)
         except Exception:
             return GuardrailResult(

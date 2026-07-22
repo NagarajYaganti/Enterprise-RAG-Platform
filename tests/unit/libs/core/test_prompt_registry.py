@@ -5,7 +5,9 @@ from core.prompt_registry import (
     REFUSAL_TEXT,
     PromptNotFoundError,
     get_prompt_template,
+    language_name_for,
     load_prompts_config,
+    refusal_text_for,
 )
 
 REPO_ROOT_PROMPTS_DIR = "config/prompts"
@@ -59,3 +61,37 @@ def test_get_prompt_template_refusal_instruction_is_consistent_across_domains() 
 def test_get_prompt_template_raises_when_not_found(tmp_path: Path) -> None:
     with pytest.raises(PromptNotFoundError):
         get_prompt_template("retrieval-qa", "nonexistent-domain", "en", str(tmp_path))
+
+
+def test_get_prompt_template_target_language_instruction_is_consistent_across_domains() -> None:
+    for domain in ("common", "bfsi", "retail", "healthcare"):
+        template = get_prompt_template("retrieval-qa", domain, "en", REPO_ROOT_PROMPTS_DIR)
+        assert "{target_language}" in template.template_text
+        assert "target_language" in template.variables
+
+
+def test_refusal_text_for_returns_real_translations_for_es_fr_de() -> None:
+    assert refusal_text_for("es") == (
+        "No tengo información sobre eso en los documentos proporcionados."
+    )
+    assert refusal_text_for("fr") == (
+        "Je n'ai pas d'informations à ce sujet dans les documents fournis."
+    )
+    assert refusal_text_for("de") == (
+        "Ich habe dazu keine Informationen in den bereitgestellten Dokumenten."
+    )
+    assert refusal_text_for("en") == REFUSAL_TEXT
+
+
+def test_refusal_text_for_falls_back_to_english_for_an_unconfigured_language() -> None:
+    assert refusal_text_for("zh") == REFUSAL_TEXT
+    assert refusal_text_for("unknown") == REFUSAL_TEXT
+
+
+def test_language_name_for_known_and_unknown_codes() -> None:
+    assert language_name_for("es") == "Spanish"
+    assert language_name_for("fr") == "French"
+    assert language_name_for("de") == "German"
+    assert language_name_for("en") == "English"
+    assert language_name_for("unknown") == "English"
+    assert language_name_for("xx") == "English"

@@ -1,0 +1,26 @@
+policy: context
+version: "1"
+rules:
+  # Any model with a verified context_window in config/models.yaml gets a
+  # real token budget (Phase-4 retrofit, docs/RETROFIT-AUDIT.md's
+  # ContextPolicy finding). 0.5 reserves half the window for the prompt
+  # template, chat history, and expected completion -- a deliberately
+  # generous, disclosed margin, not derived from a live source (these are
+  # all hundred-thousand-plus-token windows, so this is conservative, not
+  # tight). orchestrator.context_policy.decide_context_strategy computes
+  # the actual token count from this fraction -- this file only states the
+  # fraction itself, the one real strategy choice.
+  - name: known_context_window
+    when:
+      model_context_window: { ne: null }
+    then:
+      dedupe: true
+      token_budget_fraction: 0.5
+# Any model with no verified context_window (model_context_window is
+# null): today's real unconstrained behavior, unchanged -- see
+# orchestrator.context_policy.decide_context_strategy's own fallback. This
+# file's own fallback block is documentation only -- never read by the
+# policy engine (see libs/core/src/core/policy_engine.py).
+fallback:
+  dedupe: true
+  token_budget_fraction: null

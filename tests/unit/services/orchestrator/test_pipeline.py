@@ -25,7 +25,7 @@ from core.models import (
     Vector,
     VectorSearchHit,
 )
-from core.prompt_registry import REFUSAL_TEXT
+from core.prompt_registry import REFUSAL_TEXT, refusal_text_for
 from orchestrator.guardrail_pipeline import GuardrailPipeline
 from orchestrator.pipeline import (
     BLOCKED_RESPONSE_TEXT,
@@ -282,6 +282,78 @@ def test_orchestrate_generates_grounded_answer_and_records_token_usage(session: 
     assert usage_rows[0].completion_tokens == 5
 
 
+def test_orchestrate_dedupes_exact_duplicate_chunk_text_in_the_rendered_prompt(
+    session: Session,
+) -> None:
+    # Two distinct chunk ids with byte-identical text -- e.g. the same
+    # boilerplate paragraph re-ingested in two documents. ContextPolicy's
+    # real dedupe pass (wired through orchestrate() -> context_policy
+    # .build_context_block) should collapse this to a single copy in the
+    # actual rendered LLM prompt, not just in an isolated unit test.
+    duplicate_text = "Refunds are processed within 30 days."
+    ChunkRepository(session).bulk_insert(
+        [_chunk("c1", duplicate_text), _chunk("c2", duplicate_text)]
+    )
+    session.commit()
+    deps, llm_provider = _deps(
+        vector_hits=[
+            VectorSearchHit(chunk_id="c1", document_id="doc-c1", score=0.9, model_id="m"),
+            VectorSearchHit(chunk_id="c2", document_id="doc-c2", score=0.8, model_id="m"),
+        ],
+        llm_text="The refund window is 30 days [c1].",
+    )
+
+    _orchestrate(session, deps, _query())
+
+    assert llm_provider.last_messages is not None
+    prompt_text = llm_provider.last_messages[0]["content"]
+    assert prompt_text.count(duplicate_text) == 1
+
+
+def test_orchestrate_returns_a_real_spanish_refusal_when_no_chunks_retrieved(
+    session: Session,
+) -> None:
+    deps, llm_provider = _deps(vector_hits=[])
+
+    result = _orchestrate(session, deps, _query("¿Cuál es la política de reembolso?"))
+
+    assert result.blocked is False
+    assert result.answer_text == refusal_text_for("es")
+    assert result.answer_text != REFUSAL_TEXT
+    assert llm_provider.call_count == 0
+
+
+def test_orchestrate_falls_back_to_english_refusal_for_an_unsupported_language(
+    session: Session,
+) -> None:
+    # Arabic has no real translated refusal sentence configured (only
+    # es/fr/de do) — a disclosed limitation, not a silent gap.
+    deps, llm_provider = _deps(vector_hits=[])
+
+    result = _orchestrate(session, deps, _query("ما هي سياسة الاسترداد؟"))
+
+    assert result.blocked is False
+    assert result.answer_text == REFUSAL_TEXT
+    assert llm_provider.call_count == 0
+
+
+def test_orchestrate_renders_the_target_language_instruction_for_a_french_query(
+    session: Session,
+) -> None:
+    ChunkRepository(session).bulk_insert([_chunk("c1", "Refunds are processed within 30 days.")])
+    session.commit()
+    deps, llm_provider = _deps(
+        vector_hits=[VectorSearchHit(chunk_id="c1", document_id="doc-c1", score=0.9, model_id="m")],
+        llm_text="Les remboursements sont traités en 30 jours [c1].",
+    )
+
+    _orchestrate(session, deps, _query("Quelle est la politique de remboursement?"))
+
+    assert llm_provider.last_messages is not None
+    prompt_text = llm_provider.last_messages[0]["content"]
+    assert "Respond in French." in prompt_text
+
+
 def test_orchestrate_falls_back_to_refusal_when_answer_is_ungrounded(session: Session) -> None:
     ChunkRepository(session).bulk_insert([_chunk("c1", "Refunds are processed within 30 days.")])
     session.commit()
@@ -398,6 +470,7 @@ def test_orchestrate_uses_cache_hit_and_skips_generation(
     cache = SemanticCache(qdrant_client, COLLECTION, similarity_threshold=0.95, ttl_seconds=3600)
     cache.put(
         TENANT_ID,
+        ["p1"],
         str(uuid.uuid4()),
         [0.1, 0.2, 0.3, 0.4],
         "The refund window is 30 days [c1].",
@@ -439,8 +512,97 @@ def test_orchestrate_persists_a_new_cache_entry_after_a_fresh_generation(
     assert first.from_cache is False
     assert llm_provider.call_count == 1
 
-    hit = cache.get(TENANT_ID, [0.1, 0.2, 0.3, 0.4])
+    hit = cache.get(TENANT_ID, ["p1"], [0.1, 0.2, 0.3, 0.4])
     assert hit is not None
     assert hit.answer_text == "The refund window is 30 days [c1]."
     assert hit.document_ids == ["doc-c1"]
     assert hit.model_id == "gpt-5.6-luna"
+
+
+def test_orchestrate_uses_a_tighter_threshold_for_a_factual_intent_query(
+    session: Session, qdrant_client: QdrantClient
+) -> None:
+    # Two unit vectors with cosine similarity exactly 0.96 (0.96**2 + 0.28**2
+    # == 1.0): below CachePolicy's factual threshold (0.97) but above the
+    # instance/fallback default (0.95) -- proves the tighter threshold is
+    # actually the one enforced, not just accepted as a config no-op.
+    cache = SemanticCache(qdrant_client, COLLECTION, similarity_threshold=0.95, ttl_seconds=3600)
+    cache.put(
+        TENANT_ID,
+        ["p1"],
+        str(uuid.uuid4()),
+        [0.96, 0.28, 0.0, 0.0],
+        "The refund window is 30 days [c1].",
+        ["doc-c1"],
+        ["c1"],
+        "gpt-5.6-luna",
+    )
+    ChunkRepository(session).bulk_insert([_chunk("c1", "Refunds are processed within 30 days.")])
+    session.commit()
+    deps, llm_provider = _deps(
+        vector_hits=[VectorSearchHit(chunk_id="c1", document_id="doc-c1", score=0.9, model_id="m")],
+        semantic_cache=cache,
+        cache_embedding_provider=FixedVectorEmbeddingProvider([1.0, 0.0, 0.0, 0.0]),
+    )
+
+    result = _orchestrate(session, deps, _query("What is the refund window?"))
+
+    assert result.from_cache is False  # 0.96 < the factual-intent 0.97 threshold
+    assert llm_provider.call_count == 1
+
+
+def test_orchestrate_never_looks_up_the_cache_for_a_comparison_intent_query(
+    session: Session, qdrant_client: QdrantClient
+) -> None:
+    cache = SemanticCache(qdrant_client, COLLECTION, similarity_threshold=0.95, ttl_seconds=3600)
+    cache.put(
+        TENANT_ID,
+        ["p1"],
+        str(uuid.uuid4()),
+        [0.1, 0.2, 0.3, 0.4],
+        "Cached answer [c1].",
+        ["doc-c1"],
+        ["c1"],
+        "gpt-5.6-luna",
+    )
+    ChunkRepository(session).bulk_insert([_chunk("c1", "Refunds are processed within 30 days.")])
+    session.commit()
+    deps, llm_provider = _deps(
+        vector_hits=[VectorSearchHit(chunk_id="c1", document_id="doc-c1", score=0.9, model_id="m")],
+        llm_text="Compare answer [c1].",
+        semantic_cache=cache,
+        cache_embedding_provider=FixedVectorEmbeddingProvider([0.1, 0.2, 0.3, 0.4]),
+    )
+
+    result = _orchestrate(
+        session, deps, _query("Compare the refund window versus the exchange window.")
+    )
+
+    # An exact-vector match exists in the cache -- would hit under any real
+    # threshold -- but query_intent="comparison" disables the cache
+    # entirely, so the lookup never even runs.
+    assert result.from_cache is False
+    assert llm_provider.call_count == 1
+
+
+def test_orchestrate_never_caches_a_comparison_intent_answer(
+    session: Session, qdrant_client: QdrantClient
+) -> None:
+    cache = SemanticCache(qdrant_client, COLLECTION, similarity_threshold=0.95, ttl_seconds=3600)
+    ChunkRepository(session).bulk_insert([_chunk("c1", "Refunds are processed within 30 days.")])
+    session.commit()
+    query_vector = [0.5, 0.5, 0.5, 0.5]
+    deps, llm_provider = _deps(
+        vector_hits=[VectorSearchHit(chunk_id="c1", document_id="doc-c1", score=0.9, model_id="m")],
+        llm_text="Compare answer [c1].",
+        semantic_cache=cache,
+        cache_embedding_provider=FixedVectorEmbeddingProvider(query_vector),
+    )
+
+    result = _orchestrate(
+        session, deps, _query("Compare the refund window versus the exchange window.")
+    )
+
+    assert result.from_cache is False
+    assert llm_provider.call_count == 1
+    assert cache.get(TENANT_ID, ["p1"], query_vector) is None

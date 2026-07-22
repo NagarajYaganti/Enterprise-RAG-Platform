@@ -218,6 +218,7 @@ def _seed_document_for_erasure(
     query_vector = [0.1] * embedding_model["dimensions"]
     SemanticCache(qdrant_client, CACHE_COLLECTION_NAME, 0.95, 3600).put(
         tenant_id,
+        principals=["p1"],
         query_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"query:{document_id}")),
         query_vector=query_vector,
         answer_text=f"Cached answer citing [{chunk_id}]",

@@ -52,3 +52,58 @@ def test_check_fails_closed_when_analyzer_errors() -> None:
     assert result.passed is False
     assert result.reason_codes == ["GUARDRAIL_CHECK_FAILED"]
     assert result.redacted_text is None
+
+
+@pytest.fixture(scope="module")
+def multilingual_guardrail() -> PresidioGuardrail:
+    # Real Presidio + real es/fr/de spaCy pipelines together — module-scoped
+    # like `guardrail` above, since loading four spaCy pipelines is
+    # expensive.
+    return PresidioGuardrail(languages=["en", "es", "fr", "de"])
+
+
+def test_check_detects_and_redacts_real_spanish_pii(
+    multilingual_guardrail: PresidioGuardrail,
+) -> None:
+    result = multilingual_guardrail.check(
+        "Por favor contacte a Juan Pérez en juan.perez@example.com.", policy="pii:es"
+    )
+
+    assert result.passed is False
+    assert "PII_DETECTED" in result.reason_codes
+    assert result.redacted_text is not None
+    assert "juan.perez@example.com" not in result.redacted_text
+
+
+def test_check_detects_and_redacts_real_french_pii(
+    multilingual_guardrail: PresidioGuardrail,
+) -> None:
+    result = multilingual_guardrail.check(
+        "Veuillez contacter Jean Dupont à jean.dupont@example.com.", policy="pii:fr"
+    )
+
+    assert result.passed is False
+    assert "PII_DETECTED" in result.reason_codes
+    assert result.redacted_text is not None
+    assert "jean.dupont@example.com" not in result.redacted_text
+
+
+def test_check_detects_and_redacts_real_german_pii(
+    multilingual_guardrail: PresidioGuardrail,
+) -> None:
+    result = multilingual_guardrail.check(
+        "Bitte kontaktieren Sie Hans Müller unter hans.mueller@example.com.", policy="pii:de"
+    )
+
+    assert result.passed is False
+    assert "PII_DETECTED" in result.reason_codes
+    assert result.redacted_text is not None
+    assert "hans.mueller@example.com" not in result.redacted_text
+
+
+def test_check_falls_back_to_the_first_configured_language_when_unrecognized(
+    multilingual_guardrail: PresidioGuardrail,
+) -> None:
+    result = multilingual_guardrail.check("hello world", policy="pii:zh")
+    # policy string passes through unchanged; only the analysis language falls back
+    assert result.policy == "pii:zh"
