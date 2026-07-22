@@ -73,9 +73,17 @@ def evaluate_chunking_variant(
     collection_name = f"chunk_tuning_{trial_id}"
     index_name = f"chunk_tuning_{trial_id}"
 
+    from connectors.postgres.orm import Base
     from connectors.postgres.session import get_engine, get_sessionmaker
 
     engine = get_engine()
+    # A fresh CI Postgres container has no tables at all yet -- every other
+    # test/module in this codebase that opens its own session calls this
+    # first (create_all is idempotent, a no-op against a long-lived dev
+    # volume that already has the tables). Missing here caused a real CI
+    # failure (relation "documents" does not exist) that a long-lived local
+    # dev database masked.
+    Base.metadata.create_all(engine)
     session: Session = get_sessionmaker(engine)()
 
     embedding_provider = SentenceTransformersProvider(MODEL_ID)
